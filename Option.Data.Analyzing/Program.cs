@@ -16,7 +16,7 @@ try
     double currentPrice = double.TryParse(Console.ReadLine(), out currentPrice) ? currentPrice : 0;
 
     // Чтение и парсинг данных из оригинального CSV-файла биржи
-    var data = ParseMoexOptionData(filePath);
+    List<OptionData> data = ParseMoexOptionData(filePath);
 
     // Расчет текущей цены (можно указать вручную или взять из других источников)
     // Можно получать из параметров или из других источников
@@ -54,7 +54,7 @@ static List<OptionData> ParseMoexOptionData(string filePath)
 {
     Console.WriteLine($"Чтение данных из файла: {filePath}");
 
-    var result = new List<OptionData>();
+    List<OptionData> result = new List<OptionData>();
     string[] lines = File.ReadAllLines(filePath, Encoding.UTF8);
 
     if (lines.Length <= 1)
@@ -98,7 +98,7 @@ static List<OptionData> ParseMoexOptionData(string filePath)
             continue;
         }
 
-        var optionData = new OptionData
+        OptionData optionData = new OptionData
         {
             Strike = strike,
             CallOi = parts.Length > callOiIndex ? ParseDoubleWithSemicolon(parts[callOiIndex]) : 0,
@@ -119,7 +119,7 @@ static List<OptionData> ParseMoexOptionData(string filePath)
     if (result.Count > 0)
     {
         Console.WriteLine("Первые 5 строк данных:");
-        foreach (var item in result.Take(5))
+        foreach (OptionData item in result.Take(5))
         {
             Console.WriteLine(
                 $"Strike: {item.Strike}, Call OI: {item.CallOi}, Put OI: {item.PutOi}, IV: {item.Iv}");
@@ -200,15 +200,15 @@ static void CalculateMaxPain(List<OptionData> data, double currentPrice)
 {
     Console.WriteLine("РАСЧЕТ MAX PAIN");
 
-    var painResults = new List<PainResult>();
+    List<PainResult> painResults = new List<PainResult>();
 
-    foreach (var targetOption in data)
+    foreach (OptionData targetOption in data)
     {
         double targetStrike = targetOption.Strike;
         double callLosses = 0;
         double putLosses = 0;
 
-        foreach (var option in data)
+        foreach (OptionData option in data)
         {
             // Убытки для держателей Call опционов при данном страйке
             callLosses += option.CallOi * Math.Max(0, targetStrike - option.Strike);
@@ -230,7 +230,7 @@ static void CalculateMaxPain(List<OptionData> data, double currentPrice)
     painResults = painResults.OrderBy(p => p.TotalLosses).ToList();
 
     // Находим страйк с минимальными общими убытками (Max Pain)
-    var maxPainResult = painResults.First();
+    PainResult maxPainResult = painResults.First();
     double maxPainStrike = maxPainResult.Strike;
 
     Console.WriteLine($"Уровень Max Pain: {maxPainStrike}");
@@ -270,36 +270,36 @@ static void AnalyzeOpenInterest(List<OptionData> data)
 
     // Топ-5 страйков по объему Call опционов
     Console.WriteLine("Топ-5 страйков по объему Call опционов:");
-    var topCallStrikes = data
+    List<OptionData> topCallStrikes = data
         .OrderByDescending(d => d.CallOi)
         .Take(5)
         .ToList();
 
-    foreach (var strike in topCallStrikes)
+    foreach (OptionData strike in topCallStrikes)
     {
         Console.WriteLine($"Страйк: {strike.Strike}, Объем: {strike.CallOi}");
     }
 
     // Топ-5 страйков по объему Put опционов
     Console.WriteLine("\nТоп-5 страйков по объему Put опционов:");
-    var topPutStrikes = data
+    List<OptionData> topPutStrikes = data
         .OrderByDescending(d => d.PutOi)
         .Take(5)
         .ToList();
 
-    foreach (var strike in topPutStrikes)
+    foreach (OptionData strike in topPutStrikes)
     {
         Console.WriteLine($"Страйк: {strike.Strike}, Объем: {strike.PutOi}");
     }
 
     // Ключевые уровни на основе общего объема опционов
     Console.WriteLine("\nКлючевые уровни на основе общего объема опционов:");
-    var keyLevels = data
+    List<OptionData> keyLevels = data
         .OrderByDescending(d => d.CallOi + d.PutOi)
         .Take(5)
         .ToList();
 
-    foreach (var level in keyLevels)
+    foreach (OptionData level in keyLevels)
     {
         string type = level.CallOi > level.PutOi ? "Сопротивление" : "Поддержка";
         Console.WriteLine($"Страйк: {level.Strike}, Общий объем: {level.CallOi + level.PutOi}, Тип: {type}");
@@ -315,7 +315,7 @@ static void CalculateProfitLoss(List<OptionData> data, double currentPrice)
     double callProfit = 0;
     double putProfit = 0;
 
-    foreach (var option in data)
+    foreach (OptionData option in data)
     {
         // Прибыль для держателей Call опционов
         callProfit += option.CallOi * Math.Max(0, currentPrice - option.Strike);
@@ -388,7 +388,7 @@ static void AnalyzePriceMovementPotential(List<OptionData> data, double currentP
     Console.WriteLine("ПРОГНОЗ ПОТЕНЦИАЛЬНОГО ДВИЖЕНИЯ ЦЕНЫ");
 
     // Идентификация ключевых уровней сопротивления (высокий объем Call)
-    var resistanceLevels = data
+    List<OptionData> resistanceLevels = data
         .Where(d => d.Strike > currentPrice)
         .OrderBy(d => d.Strike)
         .Take(3)
@@ -396,7 +396,7 @@ static void AnalyzePriceMovementPotential(List<OptionData> data, double currentP
         .ToList();
 
     // Идентификация ключевых уровней поддержки (высокий объем Put)
-    var supportLevels = data
+    List<OptionData> supportLevels = data
         .Where(d => d.Strike < currentPrice)
         .OrderByDescending(d => d.Strike)
         .Take(3)
@@ -404,13 +404,13 @@ static void AnalyzePriceMovementPotential(List<OptionData> data, double currentP
         .ToList();
 
     Console.WriteLine("Ключевые уровни поддержки:");
-    foreach (var level in supportLevels.OrderBy(d => d.Strike))
+    foreach (OptionData level in supportLevels.OrderBy(d => d.Strike))
     {
         Console.WriteLine($"Страйк: {level.Strike}, Put OI: {level.PutOi}, Call OI: {level.CallOi}");
     }
 
     Console.WriteLine("\nКлючевые уровни сопротивления:");
-    foreach (var level in resistanceLevels)
+    foreach (OptionData level in resistanceLevels)
     {
         Console.WriteLine($"Страйк: {level.Strike}, Call OI: {level.CallOi}, Put OI: {level.PutOi}");
     }
@@ -428,14 +428,14 @@ static void AnalyzePriceMovementPotential(List<OptionData> data, double currentP
     double putCenter = data.Sum(d => d.Strike * d.PutOi) / data.Sum(d => d.PutOi);
 
     // Max Pain
-    var painResults = new List<PainResult>();
-    foreach (var targetOption in data)
+    List<PainResult> painResults = new List<PainResult>();
+    foreach (OptionData targetOption in data)
     {
         double targetStrike = targetOption.Strike;
         double callLosses = 0;
         double putLosses = 0;
 
-        foreach (var option in data)
+        foreach (OptionData option in data)
         {
             callLosses += option.CallOi * Math.Max(0, targetStrike - option.Strike);
             putLosses += option.PutOi * Math.Max(0, option.Strike - targetStrike);
