@@ -241,7 +241,7 @@ static void CalculateMaxPain(List<OptionData> data, double currentPrice)
     Console.WriteLine("\nТоп-5 страйков с наименьшими общими убытками (потенциальные уровни притяжения):");
     for (int i = 0; i < Math.Min(5, painResults.Count); i++)
     {
-        Console.WriteLine($"{i + 1}. Страйк: {painResults[i].Strike}, Общие убытки: {painResults[i].TotalLosses:F2}");
+        Console.WriteLine($"{i + 1}. Страйк: {painResults[i].Strike}, Общие убытки: {painResults[i].TotalLosses:N0}");
     }
 
     // Интерпретация Max Pain
@@ -324,8 +324,8 @@ static void CalculateProfitLoss(List<OptionData> data, double currentPrice)
         putProfit += option.PutOi * Math.Max(0, option.Strike - currentPrice);
     }
 
-    Console.WriteLine($"Прибыль держателей Call: {callProfit:F2}");
-    Console.WriteLine($"Прибыль держателей Put: {putProfit:F2}");
+    Console.WriteLine($"Прибыль держателей Call: {callProfit:N0}");
+    Console.WriteLine($"Прибыль держателей Put: {putProfit:N0}");
     Console.WriteLine($"Соотношение прибыли Call/Put: {(putProfit > 0 ? callProfit / putProfit : 0):F2}");
 
     // Интерпретация
@@ -418,7 +418,7 @@ static void AnalyzePriceMovementPotential(List<OptionData> data, double currentP
     // Расчет "силы" уровней
     double totalOi = data.Sum(d => d.CallOi + d.PutOi);
 
-    Console.WriteLine($"\nОбщий открытый интерес: {totalOi}");
+    Console.WriteLine($"\nОбщий открытый интерес: {totalOi} контрактов.");
 
     // Интерпретация на основе всего проведенного анализа
     Console.WriteLine("\nКОМПЛЕКСНЫЙ АНАЛИЗ И ПРОГНОЗ:");
