@@ -4,7 +4,7 @@ using Option.Data.Analyzing.Models;
 
 Console.OutputEncoding = Encoding.UTF8;
 
-string filePath = "C:\\Users\\vadim\\Downloads\\moex-Si-6.25.csv";
+string filePath = @"C:\Users\vadim\Downloads\moex-MIX.csv";
 if (args.Length > 0)
 {
     filePath = args[0];
@@ -12,7 +12,7 @@ if (args.Length > 0)
 
 try
 {
-    Console.WriteLine("Введите текущий уровень цены фьючерса SI:");
+    Console.WriteLine("Введите текущий уровень цены фьючерса:");
     double currentPrice = double.TryParse(Console.ReadLine(), out currentPrice) ? currentPrice : 0;
 
     // Чтение и парсинг данных из оригинального CSV-файла биржи
@@ -20,7 +20,7 @@ try
 
     // Расчет текущей цены (можно указать вручную или взять из других источников)
     // Можно получать из параметров или из других источников
-    Console.WriteLine($"Текущая цена фьючерса SI: {currentPrice}");
+    Console.WriteLine($"Текущая цена фьючерса: {currentPrice}");
 
     // Расчет Call/Put Ratio
     Functions.CalculateCallPutRatio(data);

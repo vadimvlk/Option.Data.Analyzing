@@ -454,7 +454,7 @@ public static class Functions
             return 0;
         }
 
-        // Удаляем все пробелы и заменяем точку на запятую
+        // Удаляем все пробелы и заменяем запятую  на точку.
         string cleanValue = value.Replace(" ", "").Replace(",", ".");
 
         if (double.TryParse(cleanValue, NumberStyles.Any, CultureInfo.InvariantCulture, out double result))
