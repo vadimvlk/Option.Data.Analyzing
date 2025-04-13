@@ -2,8 +2,23 @@
 
 public record OptionData
 {
-    public double CallOi { get; set; }         // Открытые позиции Call
-    public double Strike { get; set; }         // Страйк
-    public double Iv { get; set; }             // Подразумеваемая волатильность
-    public double PutOi { get; set; }          // Открытые позиции Put
+    /// <summary>
+    /// Открытые позиции Call.
+    /// </summary>
+    public double CallOi { get; set; }
+
+    /// <summary>
+    ///  Страйк.
+    /// </summary>
+    public double Strike { get; set; }
+
+    /// <summary>
+    /// Подразумеваемая волатильность.
+    /// </summary>
+    public double Iv { get; set; }
+
+    /// <summary>
+    ///  Открытые позиции Put.
+    /// </summary>
+    public double PutOi { get; set; }
 }
