@@ -10,7 +10,7 @@ public static class Functions
     {
         Console.WriteLine($"Чтение данных из файла: {filePath}");
 
-        List<OptionData> result = new List<OptionData>();
+        List<OptionData> result = new();
         string[] lines = File.ReadAllLines(filePath, Encoding.UTF8);
 
         if (lines.Length <= 1)
@@ -125,7 +125,7 @@ public static class Functions
     {
         Console.WriteLine("РАСЧЕТ MAX PAIN");
 
-        List<PainResult> painResults = new List<PainResult>();
+        List<PainResult> painResults = new();
 
         foreach (OptionData targetOption in data)
         {
@@ -189,7 +189,65 @@ public static class Functions
 
         Console.WriteLine();
     }
+    
+    
+    public static void CalculateMaxPainCoinGlass(List<OptionData> data, double currentPrice)
+    {
+        List<PainResult> painResults = new();
 
+        // Для каждого возможного уровня цены (страйка)
+        foreach (OptionData targetOption in data)
+        {
+            double targetStrike = targetOption.Strike;
+            double totalPain = 0;
+
+            // Рассчитываем стоимость всех опционов "в деньгах" при этой цене
+            foreach (OptionData option in data)
+            {
+                // Call опционы "в деньгах", если цена базового актива выше страйка
+                if (targetStrike > option.Strike)
+                {
+                    totalPain += option.CallOi * (targetStrike - option.Strike);
+                }
+
+                // Put опционы "в деньгах", если цена базового актива ниже страйка
+                if (targetStrike < option.Strike)
+                {
+                    totalPain += option.PutOi * (option.Strike - targetStrike);
+                }
+            }
+
+            painResults.Add(new PainResult
+            {
+                Strike = targetStrike,
+                TotalValue = totalPain
+            });
+        }
+
+        // Max Pain - это страйк с МИНИМАЛЬНОЙ общей стоимостью
+        painResults = painResults.OrderBy(p => p.TotalValue).ToList();
+
+        // Находим страйк с минимальной общей стоимостью опционов (Max Pain)
+        PainResult maxPainResult = painResults.First();
+        double maxPainStrike = maxPainResult.Strike;
+
+        Console.WriteLine($"Уровень Max Pain по расчетам Coinglass: {maxPainStrike}");
+        Console.WriteLine(
+            $"Текущая цена от Max Pain по расчетам Coinglass: {currentPrice - maxPainStrike:F2} пунктов ({(currentPrice - maxPainStrike) / maxPainStrike * 100:F2}%)");
+    
+        
+        // Выводим топ-5 страйков с наименьшими убытками
+        Console.WriteLine("\nТоп-5 страйков с наименьшими общими убытками (потенциальные уровни притяжения):");
+        for (int i = 0; i < Math.Min(5, painResults.Count); i++)
+        {
+            Console.WriteLine(
+                $"{i + 1}. Страйк: {painResults[i].Strike}, Общие убытки: {painResults[i].TotalValue:N0}");
+        }
+        
+        
+        Console.WriteLine();
+    }
+    
     public static void AnalyzeOpenInterest(List<OptionData> data)
     {
         Console.WriteLine("АНАЛИЗ ОТКРЫТОГО ИНТЕРЕСА");

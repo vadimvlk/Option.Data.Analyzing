@@ -21,4 +21,9 @@ public record PainResult
     /// Общие убытки.
     /// </summary>
     public double TotalLosses { get; set; }
+    
+    /// <summary>
+    /// Общие значения.
+    /// </summary>
+    public double TotalValue { get; set; }
 }

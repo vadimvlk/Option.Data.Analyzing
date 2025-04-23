@@ -4,7 +4,7 @@ using Option.Data.Analyzing.Models;
 
 Console.OutputEncoding = Encoding.UTF8;
 
-string filePath = @"C:\Users\vadim\Downloads\moex-MIX.csv";
+string filePath = @"C:\Users\vadim\Downloads\moex-Si.csv";
 if (args.Length > 0)
 {
     filePath = args[0];
@@ -27,6 +27,9 @@ try
 
     // Расчет Max Pain
     Functions.CalculateMaxPain(data, currentPrice);
+    
+    // Расчет Max Pain по алгоритму Coinglass
+    //Functions.CalculateMaxPainCoinGlass(data, currentPrice);
 
     // Анализ распределения открытого интереса
     Functions.AnalyzeOpenInterest(data);
