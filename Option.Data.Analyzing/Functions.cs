@@ -11,7 +11,7 @@ public static class Functions
         Console.WriteLine($"Чтение данных из файла: {filePath}");
 
         List<OptionData> result = new();
-        string[] lines = File.ReadAllLines(filePath, Encoding.UTF8);
+        string[] lines = File.ReadAllLines(filePath, Encoding.GetEncoding(1251));
 
         if (lines.Length <= 1)
         {

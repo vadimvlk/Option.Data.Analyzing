@@ -2,6 +2,11 @@
 using Option.Data.Analyzing;
 using Option.Data.Analyzing.Models;
 
+// Регистрируем провайдер кодировок для работы с Windows-1251.
+EncodingProvider provider = CodePagesEncodingProvider.Instance;
+Encoding.RegisterProvider(provider);
+
+
 Console.OutputEncoding = Encoding.UTF8;
 
 string filePath = @"C:\Users\vadim\Downloads\data.csv";
