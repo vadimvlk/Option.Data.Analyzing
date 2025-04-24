@@ -4,7 +4,7 @@ using Option.Data.Analyzing.Models;
 
 Console.OutputEncoding = Encoding.UTF8;
 
-string filePath = @"C:\Users\vadim\Downloads\moex-Si.csv";
+string filePath = @"C:\Users\vadim\Downloads\data.csv";
 if (args.Length > 0)
 {
     filePath = args[0];
@@ -15,8 +15,20 @@ try
     Console.WriteLine("Введите текущий уровень цены фьючерса:");
     double currentPrice = double.TryParse(Console.ReadLine(), out currentPrice) ? currentPrice : 0;
 
-    // Чтение и парсинг данных из оригинального CSV-файла биржи
-    List<OptionData> data = Functions.ParseMoexOptionData(filePath);
+    // Определяем тип CSV файла и парсим данные соответственно.
+    List<OptionData> data;
+    
+    if (Functions.IsDeribitFormat(filePath))
+    {
+        Console.WriteLine("Обнаружен формат Deribit");
+        data = Functions.ParseDeribitOptionData(filePath);
+    }
+    else
+    {
+        Console.WriteLine("Обнаружен формат MOEX");
+        data = Functions.ParseMoexOptionData(filePath);
+    }
+
 
     // Расчет текущей цены (можно указать вручную или взять из других источников)
     // Можно получать из параметров или из других источников

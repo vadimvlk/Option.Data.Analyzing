@@ -63,7 +63,7 @@ public static class Functions
                 PutOi = parts.Length > putOiIndex ? ParseDoubleWithSemicolon(parts[putOiIndex]) : 0
             };
 
-            // Добавляем только если есть хотя бы какие-то данные
+            // Добавляем, только если есть хотя бы какие-то данные
             if (optionData.CallOi > 0 || optionData.PutOi > 0)
             {
                 result.Add(optionData);
@@ -87,6 +87,146 @@ public static class Functions
         else
         {
             Console.WriteLine("Внимание: не найдено ни одной строки с данными!");
+        }
+
+        return result;
+    }
+
+
+    public static List<OptionData> ParseDeribitOptionData(string filePath)
+    {
+        Console.WriteLine($"Чтение данных из файла Deribit: {filePath}");
+
+        Dictionary<double, OptionData> optionsByStrike = new();
+
+        string[] lines = File.ReadAllLines(filePath, Encoding.UTF8);
+
+        if (lines.Length <= 1)
+        {
+            throw new Exception("Файл не содержит данных или содержит только заголовок");
+        }
+
+        Console.WriteLine("Анализ структуры файла Deribit...");
+
+        // Получаем индексы нужных колонок из заголовка (разделитель - запятая)
+        string[] headers = lines[0].Split(',');
+
+        // Необходимые колонки для Deribit формата
+        int instrumentIndex = FindColumnIndex(headers, "Instrument");
+        int openInterestIndex = TryFindColumnIndex(headers, "Open"); // Открытый интерес в Deribit
+        int ivBidIndex = TryFindColumnIndex(headers, "IV Bid");
+        int ivAskIndex = TryFindColumnIndex(headers, "IV Ask");
+
+        Console.WriteLine("Индексы колонок найдены. Обработка данных...");
+
+        // Парсим данные из строк
+        for (int i = 1; i < lines.Length; i++)
+        {
+            string line = lines[i].Trim();
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
+
+            string[] parts = line.Split(',');
+
+            // Пропускаем неполные строки
+            if (parts.Length <= instrumentIndex || string.IsNullOrWhiteSpace(parts[instrumentIndex]))
+            {
+                continue;
+            }
+
+            // Парсим имя инструмента, чтобы извлечь страйк и тип опциона (C/P)
+            string instrument = parts[instrumentIndex];
+            if (!TryParseInstrument(instrument, out double strike, out bool isCall))
+            {
+                continue;
+            }
+
+            // Вычисляем IV как среднее между IV Bid и IV Ask, если доступно
+            double iv = 0;
+            if (ivBidIndex >= 0 && ivAskIndex >= 0 && parts.Length > Math.Max(ivBidIndex, ivAskIndex))
+            {
+                double ivBid = ParseDoubleOrDefault(parts[ivBidIndex]);
+                double ivAsk = ParseDoubleOrDefault(parts[ivAskIndex]);
+
+                if (ivBid > 0 && ivAsk > 0)
+                {
+                    iv = (ivBid + ivAsk) / 2;
+                }
+                else if (ivBid > 0)
+                {
+                    iv = ivBid;
+                }
+                else if (ivAsk > 0)
+                {
+                    iv = ivAsk;
+                }
+            }
+
+            // Получаем открытый интерес
+            double openInterest = openInterestIndex >= 0 && parts.Length > openInterestIndex
+                ? ParseDoubleOrDefault(parts[openInterestIndex])
+                : 0;
+
+            // Проверяем, есть ли уже этот страйк в словаре
+            if (optionsByStrike.TryGetValue(strike, out var existingOption))
+            {
+                // Обновляем существующий страйк
+                if (isCall)
+                {
+                    existingOption.CallOi = openInterest;
+                    // Обновляем, IV только если есть значение и оно лучше текущего
+                    if (iv > 0 && existingOption.Iv == 0)
+                    {
+                        existingOption.Iv = iv;
+                    }
+                }
+                else
+                {
+                    existingOption.PutOi = openInterest;
+                    // Обновляем, IV только если есть значение и оно лучше текущего
+                    if (iv > 0 && existingOption.Iv == 0)
+                    {
+                        existingOption.Iv = iv;
+                    }
+                }
+            }
+            else
+            {
+                // Создаем новую запись для страйка
+                OptionData optionData = new OptionData
+                {
+                    Strike = strike,
+                    Iv = iv,
+                    CallOi = isCall ? openInterest : 0,
+                    PutOi = isCall ? 0 : openInterest
+                };
+
+                optionsByStrike[strike] = optionData;
+            }
+        }
+
+        // Конвертируем словарь в список
+        List<OptionData> result = optionsByStrike.Values.OrderBy(o => o.Strike).ToList();
+
+        Console.WriteLine($"Успешно обработано {result.Count} страйков данных из Deribit\n");
+
+        // Выводим первые 5 строк для проверки
+        if (result.Count > 0)
+        {
+            Console.WriteLine("Первые 5 страйков данных:");
+            foreach (OptionData item in result.Take(5))
+            {
+                Console.WriteLine(
+                    $"Strike: {item.Strike}, Call OI: {item.CallOi}, Put OI: {item.PutOi}, IV: {item.Iv}");
+            }
+
+            Console.WriteLine();
+        }
+        else
+        {
+            Console.WriteLine("Внимание: не найдено ни одного страйка с данными!");
         }
 
         return result;
@@ -189,65 +329,8 @@ public static class Functions
 
         Console.WriteLine();
     }
-    
-    
-    public static void CalculateMaxPainCoinGlass(List<OptionData> data, double currentPrice)
-    {
-        List<PainResult> painResults = new();
 
-        // Для каждого возможного уровня цены (страйка)
-        foreach (OptionData targetOption in data)
-        {
-            double targetStrike = targetOption.Strike;
-            double totalPain = 0;
 
-            // Рассчитываем стоимость всех опционов "в деньгах" при этой цене
-            foreach (OptionData option in data)
-            {
-                // Call опционы "в деньгах", если цена базового актива выше страйка
-                if (targetStrike > option.Strike)
-                {
-                    totalPain += option.CallOi * (targetStrike - option.Strike);
-                }
-
-                // Put опционы "в деньгах", если цена базового актива ниже страйка
-                if (targetStrike < option.Strike)
-                {
-                    totalPain += option.PutOi * (option.Strike - targetStrike);
-                }
-            }
-
-            painResults.Add(new PainResult
-            {
-                Strike = targetStrike,
-                TotalValue = totalPain
-            });
-        }
-
-        // Max Pain - это страйк с МИНИМАЛЬНОЙ общей стоимостью
-        painResults = painResults.OrderBy(p => p.TotalValue).ToList();
-
-        // Находим страйк с минимальной общей стоимостью опционов (Max Pain)
-        PainResult maxPainResult = painResults.First();
-        double maxPainStrike = maxPainResult.Strike;
-
-        Console.WriteLine($"Уровень Max Pain по расчетам Coinglass: {maxPainStrike}");
-        Console.WriteLine(
-            $"Текущая цена от Max Pain по расчетам Coinglass: {currentPrice - maxPainStrike:F2} пунктов ({(currentPrice - maxPainStrike) / maxPainStrike * 100:F2}%)");
-    
-        
-        // Выводим топ-5 страйков с наименьшими убытками
-        Console.WriteLine("\nТоп-5 страйков с наименьшими общими убытками (потенциальные уровни притяжения):");
-        for (int i = 0; i < Math.Min(5, painResults.Count); i++)
-        {
-            Console.WriteLine(
-                $"{i + 1}. Страйк: {painResults[i].Strike}, Общие убытки: {painResults[i].TotalValue:N0}");
-        }
-        
-        
-        Console.WriteLine();
-    }
-    
     public static void AnalyzeOpenInterest(List<OptionData> data)
     {
         Console.WriteLine("АНАЛИЗ ОТКРЫТОГО ИНТЕРЕСА");
@@ -489,6 +572,24 @@ public static class Functions
         }
     }
 
+    // Метод для определения формата файла
+    public static bool IsDeribitFormat(string path)
+    {
+        try
+        {
+            string? firstLine = File.ReadLines(path).FirstOrDefault();
+            if (string.IsNullOrEmpty(firstLine))
+                return false;
+
+            // Проверяем наличие характерных заголовков для Deribit
+            return firstLine.Contains("Instrument") &&
+                   !firstLine.Contains(';'); // Deribit использует запятые, а не точки с запятой
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     #region Private
 
@@ -512,7 +613,67 @@ public static class Functions
             return 0;
         }
 
-        // Удаляем все пробелы и заменяем запятую  на точку.
+        // Удаляем все пробелы и заменяем запятую на точку.
+        string cleanValue = value.Replace(" ", "").Replace(",", ".");
+
+        if (double.TryParse(cleanValue, NumberStyles.Any, CultureInfo.InvariantCulture, out double result))
+        {
+            return result;
+        }
+
+        return 0;
+    }
+
+
+    // Вспомогательный метод для парсинга информации из имени инструмента
+    private static bool TryParseInstrument(string instrument, out double strike, out bool isCall)
+    {
+        strike = 0;
+        isCall = false;
+
+        // Формат: BTC-25APR25-40000-C (или -P для Put)
+        string[] parts = instrument.Split('-');
+        if (parts.Length < 4)
+        {
+            return false;
+        }
+
+        // Страйк находится в третьей части (индекс 2)
+        if (!double.TryParse(parts[2], out strike))
+        {
+            return false;
+        }
+
+        // Тип опциона (Call/Put) находится в последней части
+        string optionType = parts[3];
+        isCall = optionType.EndsWith("C", StringComparison.InvariantCultureIgnoreCase);
+
+        return true;
+    }
+
+    // Безопасный поиск колонки, возвращает -1, если не найдена
+    private static int TryFindColumnIndex(string[] headers, string columnName)
+    {
+        for (int i = 0; i < headers.Length; i++)
+        {
+            if (headers[i].Trim() == columnName)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    // Безопасный парсинг double, возвращает 0, если не удалось распарсить
+    private static double ParseDoubleOrDefault(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value == "-")
+        {
+            return 0;
+        }
+
+        // Удаляем все пробелы и заменяем запятую на точку
         string cleanValue = value.Replace(" ", "").Replace(",", ".");
 
         if (double.TryParse(cleanValue, NumberStyles.Any, CultureInfo.InvariantCulture, out double result))
@@ -524,4 +685,65 @@ public static class Functions
     }
 
     #endregion Private
+
+    #region MaxPainCoinGlass
+
+    public static void CalculateMaxPainCoinGlass(List<OptionData> data, double currentPrice)
+    {
+        List<PainResult> painResults = new();
+
+        // Для каждого возможного уровня цены (страйка)
+        foreach (OptionData targetOption in data)
+        {
+            double targetStrike = targetOption.Strike;
+            double totalPain = 0;
+
+            // Рассчитываем стоимость всех опционов "в деньгах" при этой цене
+            foreach (OptionData option in data)
+            {
+                // Call опционы "в деньгах", если цена базового актива выше страйка
+                if (targetStrike > option.Strike)
+                {
+                    totalPain += option.CallOi * (targetStrike - option.Strike);
+                }
+
+                // Put опционы "в деньгах", если цена базового актива ниже страйка
+                if (targetStrike < option.Strike)
+                {
+                    totalPain += option.PutOi * (option.Strike - targetStrike);
+                }
+            }
+
+            painResults.Add(new PainResult
+            {
+                Strike = targetStrike,
+                TotalValue = totalPain
+            });
+        }
+
+        // Max Pain - это страйк с МИНИМАЛЬНОЙ общей стоимостью
+        painResults = painResults.OrderBy(p => p.TotalValue).ToList();
+
+        // Находим страйк с минимальной общей стоимостью опционов (Max Pain)
+        PainResult maxPainResult = painResults.First();
+        double maxPainStrike = maxPainResult.Strike;
+
+        Console.WriteLine($"Уровень Max Pain по расчетам Coinglass: {maxPainStrike}");
+        Console.WriteLine(
+            $"Текущая цена от Max Pain по расчетам Coinglass: {currentPrice - maxPainStrike:F2} пунктов ({(currentPrice - maxPainStrike) / maxPainStrike * 100:F2}%)");
+
+
+        // Выводим топ-5 страйков с наименьшими убытками
+        Console.WriteLine("\nТоп-5 страйков с наименьшими общими убытками (потенциальные уровни притяжения):");
+        for (int i = 0; i < Math.Min(5, painResults.Count); i++)
+        {
+            Console.WriteLine(
+                $"{i + 1}. Страйк: {painResults[i].Strike}, Общие убытки: {painResults[i].TotalValue:N0}");
+        }
+
+
+        Console.WriteLine();
+    }
+
+    #endregion
 }
