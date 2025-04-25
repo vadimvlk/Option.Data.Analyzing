@@ -236,8 +236,10 @@ public static class Functions
     {
         double totalCallOi = data.Sum(d => d.CallOi);
         double totalPutOi = data.Sum(d => d.PutOi);
-        double callPutRatio = totalPutOi > 0 ? totalCallOi / (totalCallOi+totalPutOi) : 0;
-        double putCallRatio = totalPutOi > 0 ? totalPutOi / (totalCallOi+totalPutOi) : 0;
+        double callPutRatio = totalPutOi > 0 ? totalCallOi / (totalCallOi + totalPutOi) : 0;
+        double putCallRatio = totalPutOi > 0 ? totalPutOi / (totalCallOi + totalPutOi) : 0;
+
+        double optionRatio = totalPutOi > 0 ? totalCallOi / totalPutOi : 0;
 
         Console.WriteLine("АНАЛИЗ СООТНОШЕНИЯ CALL/PUT");
         Console.WriteLine($"Общий объем Call опционов: {totalCallOi:F2}");
@@ -245,7 +247,7 @@ public static class Functions
         Console.WriteLine($"Call/Put Ratio: {callPutRatio:F2}");
         Console.WriteLine($"Put/Call Ratio: {putCallRatio:F2}");
 
-        if (totalCallOi > totalPutOi &&  totalPutOi > 0)
+        if (totalCallOi > totalPutOi && totalPutOi > 0)
         {
             Console.WriteLine($"Call опционов больше в {totalCallOi / totalPutOi:F2} раз.");
         }
@@ -254,16 +256,16 @@ public static class Functions
             Console.WriteLine($"Put опционов больше в {totalPutOi / totalCallOi:F2} раз.");
         }
 
-        if (callPutRatio > 1.5)
+        if (optionRatio > 1.5)
         {
             Console.WriteLine(
                 "Интерпретация: Значительный перевес в сторону Call опционов. Рынок демонстрирует бычьи настроения.");
         }
-        else if (callPutRatio is >= 0.75 and <= 1.5)
+        else if (optionRatio is >= 0.75 and <= 1.5)
         {
             Console.WriteLine("Интерпретация: Относительно сбалансированное соотношение Call и Put опционов.");
         }
-        else if (callPutRatio > 0)
+        else if (optionRatio > 0)
         {
             Console.WriteLine(
                 "Интерпретация: Значительный перевес в сторону Put опционов. Рынок демонстрирует медвежьи настроения.");
@@ -447,24 +449,31 @@ public static class Functions
         // Интерпретация
         if (callCenter > putCenter)
         {
-            Console.WriteLine($"Интерпретация: Центр тяжести Call опционов ({callCenter:F2}) выше центра тяжести Put опционов ({putCenter:F2}), что может указывать на бычьи настроения рынка.");
+            Console.WriteLine(
+                $"Интерпретация: Центр тяжести Call опционов ({callCenter:F2}) выше центра тяжести Put опционов ({putCenter:F2}), что может указывать на бычьи настроения рынка.");
         }
         else if (callCenter < putCenter)
         {
-            Console.WriteLine($"Интерпретация: Центр тяжести Call опционов ({callCenter:F2}) ниже центра тяжести Put опционов ({putCenter:F2}), что может указывать на медвежьи настроения рынка.");
+            Console.WriteLine(
+                $"Интерпретация: Центр тяжести Call опционов ({callCenter:F2}) ниже центра тяжести Put опционов ({putCenter:F2}), что может указывать на медвежьи настроения рынка.");
         }
         else
         {
-            Console.WriteLine("Интерпретация: Центры тяжести Call и Put опционов примерно совпадают, что может указывать на нейтральные настроения рынка.");
+            Console.WriteLine(
+                "Интерпретация: Центры тяжести Call и Put опционов примерно совпадают, что может указывать на нейтральные настроения рынка.");
         }
 
-        if (currentPrice > gravityPrice)
+        if (gravityPrice > currentPrice)
         {
-            Console.WriteLine($"Текущая цена фьючерса выше центра тяжести, потенциал роста к {callCenter:F2}.");
+            Console.WriteLine(putCenter > currentPrice
+                ? $"Потенциал роста к {putCenter:F2},  признак перепроданности."
+                : $"Потенциал роста к {gravityPrice:F2}, поддержка на уровне {putCenter:F2}.");
         }
-        else if (gravityPrice > currentPrice)
+        else if (currentPrice > gravityPrice)
         {
-            Console.WriteLine($"Текущая цена фьючерса ниже центра тяжести, потенциал снижения к {putCenter:F2}.");
+            Console.WriteLine(currentPrice > callCenter
+                ? $"Потенциал снижения к {callCenter:F2}, признак перекупленности."
+                : $"Потенциал снижения к {gravityPrice:F2}, сопротивление на уровне {callCenter:F2}");
         }
 
         Console.WriteLine();
