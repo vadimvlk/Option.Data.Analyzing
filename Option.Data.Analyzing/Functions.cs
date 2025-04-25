@@ -236,12 +236,23 @@ public static class Functions
     {
         double totalCallOi = data.Sum(d => d.CallOi);
         double totalPutOi = data.Sum(d => d.PutOi);
-        double callPutRatio = totalPutOi > 0 ? totalCallOi / totalPutOi : 0;
+        double callPutRatio = totalPutOi > 0 ? totalCallOi / (totalCallOi+totalPutOi) : 0;
+        double putCallRatio = totalPutOi > 0 ? totalPutOi / (totalCallOi+totalPutOi) : 0;
 
         Console.WriteLine("АНАЛИЗ СООТНОШЕНИЯ CALL/PUT");
-        Console.WriteLine($"Общий объем Call опционов: {totalCallOi}");
-        Console.WriteLine($"Общий объем Put опционов: {totalPutOi}");
+        Console.WriteLine($"Общий объем Call опционов: {totalCallOi:F2}");
+        Console.WriteLine($"Общий объем Put опционов: {totalPutOi:F2}");
         Console.WriteLine($"Call/Put Ratio: {callPutRatio:F2}");
+        Console.WriteLine($"Put/Call Ratio: {putCallRatio:F2}");
+
+        if (totalCallOi > totalPutOi &&  totalPutOi > 0)
+        {
+            Console.WriteLine($"Call опционов больше в {totalCallOi / totalPutOi:F2} раз.");
+        }
+        else if (totalPutOi > totalCallOi && totalCallOi > 0)
+        {
+            Console.WriteLine($"Put опционов больше в {totalPutOi / totalCallOi:F2} раз.");
+        }
 
         if (callPutRatio > 1.5)
         {
@@ -369,7 +380,7 @@ public static class Functions
         foreach (OptionData level in keyLevels)
         {
             string type = level.CallOi > level.PutOi ? "Сопротивление" : "Поддержка";
-            Console.WriteLine($"Страйк: {level.Strike}, Общий объем: {level.CallOi + level.PutOi}, Тип: {type}");
+            Console.WriteLine($"Страйк: {level.Strike}, Общий объем: {level.CallOi + level.PutOi:F2}, Тип: {type}");
         }
 
         Console.WriteLine();
@@ -415,7 +426,7 @@ public static class Functions
         Console.WriteLine();
     }
 
-    public static void AnalyzeCentersOfGravity(List<OptionData> data)
+    public static void AnalyzeCentersOfGravity(List<OptionData> data, double currentPrice)
     {
         Console.WriteLine("АНАЛИЗ ЦЕНТРОВ ТЯЖЕСТИ");
 
@@ -425,26 +436,35 @@ public static class Functions
         // Расчет центра тяжести для Call и Put
         double callCenter = data.Sum(d => d.Strike * d.CallOi) / totalCallOi;
         double putCenter = data.Sum(d => d.Strike * d.PutOi) / totalPutOi;
+        // Расчет равновестной цены центра тяжести.
+        double gravityPrice = (callCenter + putCenter) / 2;
 
         Console.WriteLine($"Центр тяжести Call: {callCenter:F2}");
         Console.WriteLine($"Центр тяжести Put: {putCenter:F2}");
         Console.WriteLine($"Разница между центрами: {Math.Abs(callCenter - putCenter):F2}");
+        Console.WriteLine($"Равновестная цена центра тяжести: {gravityPrice:F2}");
 
         // Интерпретация
         if (callCenter > putCenter)
         {
-            Console.WriteLine(
-                $"Интерпретация: Центр тяжести Call опционов ({callCenter:F2}) выше центра тяжести Put опционов ({putCenter:F2}), что может указывать на бычьи настроения рынка.");
+            Console.WriteLine($"Интерпретация: Центр тяжести Call опционов ({callCenter:F2}) выше центра тяжести Put опционов ({putCenter:F2}), что может указывать на бычьи настроения рынка.");
         }
         else if (callCenter < putCenter)
         {
-            Console.WriteLine(
-                $"Интерпретация: Центр тяжести Call опционов ({callCenter:F2}) ниже центра тяжести Put опционов ({putCenter:F2}), что может указывать на медвежьи настроения рынка.");
+            Console.WriteLine($"Интерпретация: Центр тяжести Call опционов ({callCenter:F2}) ниже центра тяжести Put опционов ({putCenter:F2}), что может указывать на медвежьи настроения рынка.");
         }
         else
         {
-            Console.WriteLine(
-                "Интерпретация: Центры тяжести Call и Put опционов примерно совпадают, что может указывать на нейтральные настроения рынка.");
+            Console.WriteLine("Интерпретация: Центры тяжести Call и Put опционов примерно совпадают, что может указывать на нейтральные настроения рынка.");
+        }
+
+        if (currentPrice > gravityPrice)
+        {
+            Console.WriteLine($"Текущая цена фьючерса выше центра тяжести, потенциал роста к {callCenter:F2}.");
+        }
+        else if (gravityPrice > currentPrice)
+        {
+            Console.WriteLine($"Текущая цена фьючерса ниже центра тяжести, потенциал снижения к {putCenter:F2}.");
         }
 
         Console.WriteLine();
@@ -485,7 +505,7 @@ public static class Functions
         // Расчет "силы" уровней
         double totalOi = data.Sum(d => d.CallOi + d.PutOi);
 
-        Console.WriteLine($"\nОбщий открытый интерес: {totalOi} контрактов.");
+        Console.WriteLine($"\nОбщий открытый интерес: {totalOi:F2} контрактов.");
 
         // Интерпретация на основе всего проведенного анализа
         Console.WriteLine("\nКОМПЛЕКСНЫЙ АНАЛИЗ И ПРОГНОЗ:");

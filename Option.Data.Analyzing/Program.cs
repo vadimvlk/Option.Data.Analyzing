@@ -55,7 +55,7 @@ try
     Functions.CalculateProfitLoss(data, currentPrice);
 
     // Анализ по центрам тяжести
-    Functions.AnalyzeCentersOfGravity(data);
+    Functions.AnalyzeCentersOfGravity(data, currentPrice);
 
     // Дополнительный анализ для прогноза движения цены
     Functions.AnalyzePriceMovementPotential(data, currentPrice);
