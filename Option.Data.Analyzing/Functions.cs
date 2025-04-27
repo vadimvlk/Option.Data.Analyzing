@@ -332,7 +332,7 @@ public static class Functions
         else if (currentPrice < maxPainStrike)
         {
             Console.WriteLine(
-                $"Цена находится ниже уровня Max Pain. Теоретически это создает давление в сторону роста к уровню {maxPainStrike}.");
+                $"Цена находится ниже уровня Max Pain. Теоретически это создает потеницал в сторону роста к уровню {maxPainStrike}.");
         }
         else
         {
@@ -551,12 +551,13 @@ public static class Functions
         // Call/Put Ratio
         double callPutRatio = data.Sum(d => d.CallOi) / data.Sum(d => d.PutOi);
 
-        Console.WriteLine($"На основе проведенного анализа можно сделать следующие выводы:");
+        Console.WriteLine("На основе проведенного анализа можно сделать следующие выводы:");
         Console.WriteLine(
             $"1. Уровень Max Pain: {maxPainStrike} (текущая цена {(currentPrice > maxPainStrike ? "выше" : "ниже")})");
         Console.WriteLine(
             $"2. Соотношение Call/Put: {callPutRatio:F2} ({(callPutRatio > 1.2 ? "бычий" : callPutRatio < 0.8 ? "медвежий" : "нейтральный")} настрой)");
         Console.WriteLine($"3. Центры тяжести: Call = {callCenter:F2}, Put = {putCenter:F2}");
+        Console.WriteLine($"4. Уровнь равновесия: {(callCenter + putCenter) / 2 :F2}");
 
         // Финальный прогноз
         Console.WriteLine("\nПРОГНОЗ ДВИЖЕНИЯ ЦЕНЫ:");
