@@ -413,9 +413,7 @@ public static class Functions
         Console.WriteLine($"Вероятный верхний уровень диапазона цены: {upperBound:F2}");
         Console.WriteLine($"Вероятный нижний уровень диапазона цены: {lowerBound:F2}");
         Console.WriteLine($"Ожидаемый диапазон движения цены: {lowerBound:F2} - {upperBound:F2} " +
-                          $"({((upperBound - lowerBound) / maxPainStrike * 100):F2}% от Max Pain)");
-
-        Console.WriteLine();
+                          $"({(upperBound - lowerBound) / maxPainStrike * 100:F2}% от Max Pain)");
 
         // Интерпретация
         Console.WriteLine("\nИНТЕРПРЕТАЦИЯ:");
