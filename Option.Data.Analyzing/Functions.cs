@@ -249,11 +249,11 @@ public static class Functions
 
         if (totalCallOi > totalPutOi && totalPutOi > 0)
         {
-            Console.WriteLine($"Call опционов больше в {totalCallOi / totalPutOi:F2} раз.");
+            Console.WriteLine($"Call опционов больше в {totalCallOi / totalPutOi:F2} раза.");
         }
         else if (totalPutOi > totalCallOi && totalCallOi > 0)
         {
-            Console.WriteLine($"Put опционов больше в {totalPutOi / totalCallOi:F2} раз.");
+            Console.WriteLine($"Put опционов больше в {totalPutOi / totalCallOi:F2} раза.");
         }
 
         if (optionRatio > 1.5)
