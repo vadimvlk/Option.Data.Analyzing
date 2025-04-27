@@ -21,4 +21,14 @@ public record OptionData
     ///  Открытые позиции Put.
     /// </summary>
     public double PutOi { get; set; }
+    /// <summary>
+    /// Теоретическая стоимость Call.
+    /// </summary>
+    public double CallPrice { get; set; }
+    
+    /// <summary>
+    /// Теоретическая стоимость Put.
+    /// </summary>
+    public double PutPrice { get; set; }
+    
 }

@@ -27,6 +27,8 @@ public static class Functions
         int strikeIndex = FindColumnIndex(headers, "СТРАЙК");
         int ivIndex = FindColumnIndex(headers, "IV");
         int putOiIndex = FindColumnIndex(headers, "PUT: Открыт. позиций");
+        int priceСallIndex = FindColumnIndex(headers, "CALL: Теоретическая цена");
+        int pricePutIndex = FindColumnIndex(headers, "PUT: Теоретическая цена");
 
         Console.WriteLine("Индексы колонок найдены. Обработка данных...");
 
@@ -60,7 +62,9 @@ public static class Functions
                 Strike = strike,
                 CallOi = parts.Length > callOiIndex ? ParseDoubleWithSemicolon(parts[callOiIndex]) : 0,
                 Iv = parts.Length > ivIndex ? ParseDoubleWithSemicolon(parts[ivIndex]) : 0,
-                PutOi = parts.Length > putOiIndex ? ParseDoubleWithSemicolon(parts[putOiIndex]) : 0
+                PutOi = parts.Length > putOiIndex ? ParseDoubleWithSemicolon(parts[putOiIndex]) : 0,
+                CallPrice = parts.Length > priceСallIndex ? ParseDoubleWithSemicolon(parts[priceСallIndex]) : 0,
+                PutPrice = parts.Length > pricePutIndex ? ParseDoubleWithSemicolon(parts[pricePutIndex]) : 0,
             };
 
             // Добавляем, только если есть хотя бы какие-то данные
@@ -93,7 +97,7 @@ public static class Functions
     }
 
 
-    public static List<OptionData> ParseDeribitOptionData(string filePath)
+    public static List<OptionData> ParseDeribitOptionData(string filePath, double currentPrice)
     {
         Console.WriteLine($"Чтение данных из файла Deribit: {filePath}");
 
@@ -116,6 +120,8 @@ public static class Functions
         int openInterestIndex = TryFindColumnIndex(headers, "Open"); // Открытый интерес в Deribit
         int ivBidIndex = TryFindColumnIndex(headers, "IV Bid");
         int ivAskIndex = TryFindColumnIndex(headers, "IV Ask");
+        int priceIndex = TryFindColumnIndex(headers, "Mark");
+      
 
         Console.WriteLine("Индексы колонок найдены. Обработка данных...");
 
@@ -168,6 +174,12 @@ public static class Functions
             double openInterest = openInterestIndex >= 0 && parts.Length > openInterestIndex
                 ? ParseDoubleOrDefault(parts[openInterestIndex])
                 : 0;
+            
+            // Получаем открытый интерес
+            double optionPrice = priceIndex >= 0 && parts.Length > priceIndex
+                ? ParseDoubleOrDefault(parts[priceIndex]) * currentPrice
+                : 0;
+            
 
             // Проверяем, есть ли уже этот страйк в словаре
             if (optionsByStrike.TryGetValue(strike, out var existingOption))
@@ -176,6 +188,7 @@ public static class Functions
                 if (isCall)
                 {
                     existingOption.CallOi = openInterest;
+                    existingOption.CallPrice = optionPrice;
                     // Обновляем, IV только если есть значение и оно лучше текущего
                     if (iv > 0 && existingOption.Iv == 0)
                     {
@@ -185,6 +198,7 @@ public static class Functions
                 else
                 {
                     existingOption.PutOi = openInterest;
+                    existingOption.PutPrice = optionPrice;
                     // Обновляем, IV только если есть значение и оно лучше текущего
                     if (iv > 0 && existingOption.Iv == 0)
                     {
@@ -200,7 +214,9 @@ public static class Functions
                     Strike = strike,
                     Iv = iv,
                     CallOi = isCall ? openInterest : 0,
-                    PutOi = isCall ? 0 : openInterest
+                    PutOi = isCall ? 0 : openInterest,
+                    CallPrice = isCall ? optionPrice : 0,
+                    PutPrice = isCall ? 0 : optionPrice,
                 };
 
                 optionsByStrike[strike] = optionData;
@@ -455,7 +471,7 @@ public static class Functions
         double upperBound = EstimateThresholdLevel(data, maxPainStrike, maxPainLosses, painThreshold, step, true);
         double lowerBound = EstimateThresholdLevel(data, maxPainStrike, maxPainLosses, painThreshold, step, false);
 
-        double equilibriumGradients = CalculateGradientEquilibriumLevel(data, currentPrice, step);
+        double equilibriumGradients = CalculateGradientEquilibriumLevel(data, maxPainStrike, step);
 
         Console.WriteLine($"\n3. ДИАПАЗОНЫ И УРОВНИ РАВНОВЕСИЯ:");
         Console.WriteLine($"При увеличении убытков на {painThresholdPercent * 100}% от минимального уровня:");
@@ -818,6 +834,334 @@ public static class Functions
             }
         }
     }
+    
+    
+    public static void AnalyzeGlobalSellerPosition(List<OptionData> data, double currentPrice)
+{
+    Console.WriteLine("АНАЛИЗ ПОЗИЦИИ ГЛОБАЛЬНОГО ПРОДАВЦА ВСЕХ ОПЦИОНОВ");
+    Console.WriteLine("=====================================================");
+    
+    // 1. Подсчитываем общую полученную премию продавцом
+    double totalCallPremium = 0;
+    double totalPutPremium = 0;
+    
+    foreach (var option in data)
+    {
+        totalCallPremium += option.CallPrice * option.CallOi;
+        totalPutPremium += option.PutPrice * option.PutOi;
+    }
+    
+    double totalPremium = totalCallPremium + totalPutPremium;
+    
+    Console.WriteLine($"Текущая цена базового актива: {currentPrice:F2}");
+    Console.WriteLine($"Общая полученная премия: {totalPremium:N0}");
+    Console.WriteLine($"  - От Call опционов: {totalCallPremium:N0} ({totalCallPremium / totalPremium * 100:F1}%)");
+    Console.WriteLine($"  - От Put опционов: {totalPutPremium:N0} ({totalPutPremium / totalPremium * 100:F1}%)");
+    
+    // 2. Определяем диапазон цен для анализа
+    double minStrike = data.Min(d => d.Strike);
+    double maxStrike = data.Max(d => d.Strike);
+    
+    // Чтобы не упустить безубыточные точки вне диапазона страйков, расширим диапазон на 30%
+    double rangeExtensionPercent = 0.3;
+    double minPrice = minStrike * (1 - rangeExtensionPercent);
+    double maxPrice = maxStrike * (1 + rangeExtensionPercent);
+    
+    // Шаг для анализа (примерно 0.5% от текущей цены)
+    double step = currentPrice * 0.005;
+    
+    // 3. Анализируем профит/убыток продавца на разных уровнях цены
+    List<(double Price, double TotalPnL, double CallPnL, double PutPnL)> pnlData = new();
+    
+    for (double price = minPrice; price <= maxPrice; price += step)
+    {
+        double callPnL = CalculateSellerCallPnL(data, price);
+        double putPnL = CalculateSellerPutPnL(data, price);
+        double totalPnL = callPnL + putPnL;
+        
+        pnlData.Add((price, totalPnL, callPnL, putPnL));
+    }
+    
+    // 4. Анализируем убытки на текущей цене
+    var currentPnL = pnlData.FirstOrDefault(p => Math.Abs(p.Price - currentPrice) < step / 2);
+    if (currentPnL == default)
+    {
+        // Если точно не нашли, найдем ближайшую точку
+        currentPnL = pnlData.OrderBy(p => Math.Abs(p.Price - currentPrice)).First();
+    }
+    
+    Console.WriteLine("\nПОЗИЦИЯ ПРОДАВЦА ПРИ ТЕКУЩЕЙ ЦЕНЕ:");
+    Console.WriteLine($"PnL при {currentPnL.Price:F2}: {currentPnL.TotalPnL:N0}");
+    Console.WriteLine($"  - PnL от Call опционов: {currentPnL.CallPnL:N0}");
+    Console.WriteLine($"  - PnL от Put опционов: {currentPnL.PutPnL:N0}");
+    
+    if (currentPnL.TotalPnL >= 0)
+    {
+        Console.WriteLine("✓ ПРОДАВЕЦ В ПРИБЫЛИ на текущем уровне цены");
+    }
+    else
+    {
+        Console.WriteLine("✗ ПРОДАВЕЦ В УБЫТКЕ на текущем уровне цены");
+        Console.WriteLine($"  Размер убытка: {Math.Abs(currentPnL.TotalPnL):N0} ({Math.Abs(currentPnL.TotalPnL) / totalPremium * 100:F1}% от полученной премии)");
+    }
+    
+    // 5. Находим безубыточные зоны (где PnL >= 0)
+    List<(double LowerBound, double UpperBound)> profitZones = new();
+    
+    for (int i = 0; i < pnlData.Count - 1; i++)
+    {
+        if (pnlData[i].TotalPnL >= 0 && (i == 0 || pnlData[i-1].TotalPnL < 0))
+        {
+            // Начало зоны прибыли
+            double lowerBound = pnlData[i].Price;
+            
+            // Ищем конец зоны прибыли
+            double upperBound = maxPrice;
+            for (int j = i + 1; j < pnlData.Count; j++)
+            {
+                if (pnlData[j].TotalPnL < 0)
+                {
+                    upperBound = pnlData[j-1].Price;
+                    break;
+                }
+            }
+            
+            profitZones.Add((lowerBound, upperBound));
+            
+            // Переходим к поиску следующей зоны прибыли
+            while (i < pnlData.Count && pnlData[i].TotalPnL >= 0)
+            {
+                i++;
+            }
+        }
+    }
+    
+    Console.WriteLine("\nБЕЗУБЫТОЧНЫЕ ЗОНЫ ДЛЯ ПРОДАВЦА:");
+    if (profitZones.Count == 0)
+    {
+        Console.WriteLine("Продавец в убытке на всём рассматриваемом диапазоне цен.");
+    }
+    else
+    {
+        foreach (var (lower, upper) in profitZones)
+        {
+            Console.WriteLine($"Зона безубытка: {lower:F2} - {upper:F2} ({(upper - lower) / currentPrice * 100:F2}% от текущей цены)");
+        }
+    }
+    
+    // 6. Находим точки максимальной прибыли и максимального убытка
+    var maxProfitPoint = pnlData.OrderByDescending(p => p.TotalPnL).First();
+    var maxLossPoint = pnlData.OrderBy(p => p.TotalPnL).First();
+    
+    Console.WriteLine("\nКЛЮЧЕВЫЕ УРОВНИ:");
+    Console.WriteLine($"Максимальная прибыль: {maxProfitPoint.TotalPnL:N0} при цене {maxProfitPoint.Price:F2}");
+    Console.WriteLine($"Максимальный убыток: {maxLossPoint.TotalPnL:N0} при цене {maxLossPoint.Price:F2}");
+    
+    // 7. Находим нижнюю и верхнюю точки безубытка (ближайшие к текущей цене)
+    // Сначала находим все точки безубытка (переходы через 0)
+    List<double> breakEvenPoints = new();
+    
+    for (int i = 0; i < pnlData.Count - 1; i++)
+    {
+        // Если PnL меняет знак между соседними точками - это точка безубытка
+        if ((pnlData[i].TotalPnL >= 0 && pnlData[i+1].TotalPnL < 0) || 
+            (pnlData[i].TotalPnL < 0 && pnlData[i+1].TotalPnL >= 0))
+        {
+            // Линейная интерполяция для нахождения точного значения
+            double pnl1 = pnlData[i].TotalPnL;
+            double pnl2 = pnlData[i+1].TotalPnL;
+            double price1 = pnlData[i].Price;
+            double price2 = pnlData[i+1].Price;
+            
+            // Формула линейной интерполяции: price = price1 + (0 - pnl1) * (price2 - price1) / (pnl2 - pnl1)
+            double breakEvenPrice = price1 + (0 - pnl1) * (price2 - price1) / (pnl2 - pnl1);
+            breakEvenPoints.Add(breakEvenPrice);
+        }
+    }
+    
+    // Сортируем точки безубытка
+    breakEvenPoints.Sort();
+    
+    Console.WriteLine("\nТОЧКИ БЕЗУБЫТКА (ZERO-CROSS LEVELS):");
+    if (breakEvenPoints.Count == 0)
+    {
+        Console.WriteLine("Точек безубытка не найдено в анализируемом диапазоне цен.");
+    }
+    else
+    {
+        foreach (var point in breakEvenPoints)
+        {
+            Console.WriteLine($"Точка безубытка: {point:F2} ({(point - currentPrice) / currentPrice * 100:F2}% от текущей цены)");
+        }
+        
+        // Находим ближайшие точки безубытка снизу и сверху от текущей цены
+        double? lowerBreakEven = breakEvenPoints.Where(p => p < currentPrice).DefaultIfEmpty(double.NaN).Max();
+        double? upperBreakEven = breakEvenPoints.Where(p => p > currentPrice).DefaultIfEmpty(double.NaN).Min();
+        
+        Console.WriteLine("\nБЛИЖАЙШИЕ ТОЧКИ БЕЗУБЫТКА К ТЕКУЩЕЙ ЦЕНЕ:");
+        if (!double.IsNaN((double)lowerBreakEven))
+        {
+            Console.WriteLine($"Нижняя точка безубытка: {lowerBreakEven:F2} ({(lowerBreakEven - currentPrice) / currentPrice * 100:F2}%)");
+        }
+        else
+        {
+            Console.WriteLine("Нижняя точка безубытка не найдена в анализируемом диапазоне.");
+        }
+        
+        if (!double.IsNaN((double)upperBreakEven))
+        {
+            Console.WriteLine($"Верхняя точка безубытка: {upperBreakEven:F2} ({(upperBreakEven - currentPrice) / currentPrice * 100:F2}%)");
+        }
+        else
+        {
+            Console.WriteLine("Верхняя точка безубытка не найдена в анализируемом диапазоне.");
+        }
+        
+        // Определяем вероятный диапазон движения цены
+        if (!double.IsNaN((double)lowerBreakEven) && !double.IsNaN((double)upperBreakEven))
+        {
+            Console.WriteLine($"\nВЕРОЯТНЫЙ ДИАПАЗОН ДВИЖЕНИЯ ЦЕНЫ: {lowerBreakEven:F2} - {upperBreakEven:F2} " +
+                              $"({(upperBreakEven - lowerBreakEven) / currentPrice * 100:F2}% от текущей цены)");
+            
+            // Находим преобладающую силу: растущую или падающую
+            double distanceToLower = currentPrice - (double)lowerBreakEven;
+            double distanceToUpper = (double)upperBreakEven - currentPrice;
+            
+            if (distanceToLower * 1.2 < distanceToUpper)
+            {
+                Console.WriteLine("⚠ ВНИМАНИЕ: Текущая цена значительно ближе к нижней точке безубытка.");
+                Console.WriteLine("   Это указывает на повышенный риск пробоя вниз и возможное значительное падение цены.");
+            }
+            else if (distanceToUpper * 1.2 < distanceToLower)
+            {
+                Console.WriteLine("⚠ ВНИМАНИЕ: Текущая цена значительно ближе к верхней точке безубытка.");
+                Console.WriteLine("   Это указывает на повышенный риск пробоя вверх и возможное значительное повышение цены.");
+            }
+            else
+            {
+                Console.WriteLine("Текущая цена находится в относительно сбалансированном положении между точками безубытка.");
+            }
+        }
+    }
+    
+    // 8. Интерпретация и рекомендация
+    Console.WriteLine("\nИНТЕРПРЕТАЦИЯ И РЕКОМЕНДАЦИЯ:");
+    
+    // Анализ относительного положения
+    if (breakEvenPoints.Count >= 2)
+    {
+        // Найдем ближайшие точки безубытка
+        double? lowerBreakEven = breakEvenPoints.Where(p => p < currentPrice).DefaultIfEmpty(double.NaN).Max();
+        double? upperBreakEven = breakEvenPoints.Where(p => p > currentPrice).DefaultIfEmpty(double.NaN).Min();
+        
+        if (!double.IsNaN((double)lowerBreakEven) && !double.IsNaN((double)upperBreakEven))
+        {
+            // Определим, в какой части диапазона между точками безубытка находится текущая цена
+            double rangePosition = (currentPrice - (double)lowerBreakEven) / ((double)upperBreakEven - (double)lowerBreakEven);
+            
+            if (rangePosition < 0.2)
+            {
+                Console.WriteLine("Текущая цена находится очень близко к нижней точке безубытка.");
+                Console.WriteLine("Рекомендация: Существует высокая вероятность отскока вверх или пробоя вниз. Возможны среднесрочные длинные позиции с защитным стоп-лоссом ниже точки безубытка.");
+            }
+            else if (rangePosition > 0.8)
+            {
+                Console.WriteLine("Текущая цена находится очень близко к верхней точке безубытка.");
+                Console.WriteLine("Рекомендация: Существует высокая вероятность отскока вниз или пробоя вверх. Возможны среднесрочные короткие позиции с защитным стоп-лоссом выше точки безубытка.");
+            }
+            else if (rangePosition >= 0.4 && rangePosition <= 0.6)
+            {
+                Console.WriteLine("Текущая цена находится примерно в середине диапазона между точками безубытка.");
+                Console.WriteLine("Рекомендация: Боковое движение наиболее вероятно. Рассмотрите стратегии диапазонной торговли между точками безубытка.");
+            }
+            else if (rangePosition < 0.4)
+            {
+                Console.WriteLine("Текущая цена находится ближе к нижней точке безубытка.");
+                Console.WriteLine("Рекомендация: Повышенная вероятность движения вверх в среднесрочной перспективе. Предпочтительны длинные позиции.");
+            }
+            else // rangePosition > 0.6
+            {
+                Console.WriteLine("Текущая цена находится ближе к верхней точке безубытка.");
+                Console.WriteLine("Рекомендация: Повышенная вероятность движения вниз в среднесрочной перспективе. Предпочтительны короткие позиции.");
+            }
+        }
+    }
+    
+    if (currentPnL.TotalPnL < 0 && profitZones.Count > 0)
+    {
+        Console.WriteLine("\nПродавец опционов сейчас в убытке, что создает давление на движение цены к ближайшей зоне безубытка.");
+        
+        // Находим ближайшую зону безубытка
+        var closest = profitZones
+            .Select(zone => new
+            {
+                Zone = zone,
+                Distance = Math.Min(
+                    Math.Abs(zone.LowerBound - currentPrice),
+                    Math.Abs(zone.UpperBound - currentPrice)
+                )
+            })
+            .OrderBy(x => x.Distance)
+            .First();
+        
+        if (closest.Zone.LowerBound <= currentPrice && closest.Zone.UpperBound >= currentPrice)
+        {
+            Console.WriteLine("Текущая цена находится внутри зоны безубытка.");
+        }
+        else if (Math.Abs(closest.Zone.LowerBound - currentPrice) < Math.Abs(closest.Zone.UpperBound - currentPrice))
+        {
+            Console.WriteLine($"Ближайший уровень безубытка находится снизу на уровне {closest.Zone.LowerBound:F2}.");
+            Console.WriteLine("Возможно давление на цену в сторону снижения.");
+        }
+        else
+        {
+            Console.WriteLine($"Ближайший уровень безубытка находится сверху на уровне {closest.Zone.UpperBound:F2}.");
+            Console.WriteLine("Возможно давление на цену в сторону повышения.");
+        }
+    }
+    
+    Console.WriteLine();
+}
+
+/// <summary>
+/// Рассчитывает PnL продавца Call опционов при заданной цене базового актива
+/// </summary>
+private static double CalculateSellerCallPnL(List<OptionData> data, double price)
+{
+    double totalPnL = 0;
+    
+    foreach (var option in data)
+    {
+        double receivedPremium = option.CallPrice * option.CallOi;
+        double payout = Math.Max(0, price - option.Strike) * option.CallOi;
+        double pnl = receivedPremium - payout;
+        
+        totalPnL += pnl;
+    }
+    
+    return totalPnL;
+}
+
+/// <summary>
+/// Рассчитывает PnL продавца Put опционов при заданной цене базового актива
+/// </summary>
+private static double CalculateSellerPutPnL(List<OptionData> data, double price)
+{
+    double totalPnL = 0;
+    
+    foreach (var option in data)
+    {
+        double receivedPremium = option.PutPrice * option.PutOi;
+        double payout = Math.Max(0, option.Strike - price) * option.PutOi;
+        double pnl = receivedPremium - payout;
+        
+        totalPnL += pnl;
+    }
+    
+    return totalPnL;
+}
+
+    
 
     // Метод для определения формата файла
     public static bool IsDeribitFormat(string path)
@@ -1074,7 +1418,7 @@ public static class Functions
             }
         }
 
-       return equilibriumPrice;
+        return equilibriumPrice;
     }
 
     #endregion Private
@@ -1139,4 +1483,10 @@ public static class Functions
     }
 
     #endregion
+}
+
+public enum OptionType
+{
+    Call,
+    Put
 }

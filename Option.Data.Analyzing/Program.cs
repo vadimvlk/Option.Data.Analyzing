@@ -26,7 +26,7 @@ try
     if (Functions.IsDeribitFormat(filePath))
     {
         Console.WriteLine("Обнаружен формат Deribit");
-        data = Functions.ParseDeribitOptionData(filePath);
+        data = Functions.ParseDeribitOptionData(filePath, currentPrice);
     }
     else
     {
@@ -59,6 +59,9 @@ try
 
     // Дополнительный анализ для прогноза движения цены
     Functions.AnalyzePriceMovementPotential(data, currentPrice);
+    
+    Functions.AnalyzeGlobalSellerPosition(data, currentPrice);
+
 }
 catch (Exception ex)
 {
