@@ -343,16 +343,19 @@ public static class Functions
         Console.WriteLine();
 
         // Анализ скорости прироста убытков
-        AnalyzePainGradient(data, maxPainStrike);
+        AnalyzePainGradient(data, maxPainStrike, currentPrice);
     }
 
 
-    private static void AnalyzePainGradient(List<OptionData> data, double maxPainStrike)
+    private static void AnalyzePainGradient(List<OptionData> data, double maxPainStrike, double currentPrice)
     {
-        Console.WriteLine("АНАЛИЗ СКОРОСТИ ПРИРОСТА УБЫТКОВ ОТНОСИТЕЛЬНО MAX PAIN");
+        Console.WriteLine("АНАЛИЗ СКОРОСТИ ПРИРОСТА УБЫТКОВ");
 
         // Определяем шаг для расчета скорости изменения (например, 1% от maxPainStrike)
         double step = maxPainStrike * 0.01;
+
+        // 1. АНАЛИЗ ОТНОСИТЕЛЬНО MAX PAIN
+        Console.WriteLine("\n1. АНАЛИЗ ОТНОСИТЕЛЬНО MAX PAIN:");
 
         // Рассчитываем убытки на уровне MaxPain
         double maxPainLosses = CalculateTotalLossesAtPrice(data, maxPainStrike);
@@ -376,7 +379,7 @@ public static class Functions
         double callLossesDown = CalculateCallLossesAtPrice(data, downLevel);
         double putLossesDown = CalculatePutLossesAtPrice(data, downLevel);
 
-        // Расчет градиентов
+        // Расчет градиентов относительно MaxPain
         double totalGradientUp = (totalLossesUp - maxPainLosses) / step;
         double totalGradientDown = (totalLossesDown - maxPainLosses) / step;
         double callGradientUp = (callLossesUp - callLossesAtMaxPain) / step;
@@ -384,7 +387,7 @@ public static class Functions
         double putGradientUp = (putLossesUp - putLossesAtMaxPain) / step;
         double putGradientDown = (putLossesDown - putLossesAtMaxPain) / step;
 
-        Console.WriteLine("\nИЗМЕНЕНИЕ УБЫТКОВ ПРИ ДВИЖЕНИИ ЦЕНЫ:");
+        Console.WriteLine("\nИЗМЕНЕНИЕ УБЫТКОВ ПРИ ДВИЖЕНИИ ЦЕНЫ ОТ MAX PAIN:");
         Console.WriteLine($"При движении ВВЕРХ на {step:F2} пунктов от Max Pain:");
         Console.WriteLine(
             $"  Общие убытки: +{totalLossesUp - maxPainLosses:N0} (скорость: {totalGradientUp:N0} на пункт)");
@@ -400,7 +403,52 @@ public static class Functions
             $"  Убытки Call: {(callLossesDown - callLossesAtMaxPain >= 0 ? "+" : "")}{callLossesDown - callLossesAtMaxPain:N0} (скорость: {callGradientDown:N0} на пункт)");
         Console.WriteLine(
             $"  Убытки Put: +{putLossesDown - putLossesAtMaxPain:N0} (скорость: {putGradientDown:N0} на пункт)");
+
+        // 2. АНАЛИЗ ОТНОСИТЕЛЬНО ТЕКУЩЕЙ ЦЕНЫ
+        Console.WriteLine("\n2. АНАЛИЗ ОТНОСИТЕЛЬНО ТЕКУЩЕЙ ЦЕНЫ:");
+        // Рассчитываем убытки на уровне текущей цены
+        double currentPriceLosses = CalculateTotalLossesAtPrice(data, currentPrice);
+        double callLossesAtCurrent = CalculateCallLossesAtPrice(data, currentPrice);
+        double putLossesAtCurrent = CalculatePutLossesAtPrice(data, currentPrice);
+
+     
+        // Рассчитываем убытки выше текущей цены
+        double currentUpLevel = currentPrice + step;
+        double totalLossesCurrentUp = CalculateTotalLossesAtPrice(data, currentUpLevel);
+        double callLossesCurrentUp = CalculateCallLossesAtPrice(data, currentUpLevel);
+        double putLossesCurrentUp = CalculatePutLossesAtPrice(data, currentUpLevel);
+
+        // Рассчитываем убытки ниже текущей цены
+        double currentDownLevel = currentPrice - step;
+        double totalLossesCurrentDown = CalculateTotalLossesAtPrice(data, currentDownLevel);
+        double callLossesCurrentDown = CalculateCallLossesAtPrice(data, currentDownLevel);
+        double putLossesCurrentDown = CalculatePutLossesAtPrice(data, currentDownLevel);
+
+        // Расчет градиентов относительно текущей цены
+        double totalGradientCurrentUp = (totalLossesCurrentUp - currentPriceLosses) / step;
+        double totalGradientCurrentDown = (totalLossesCurrentDown - currentPriceLosses) / step;
+        double callGradientCurrentUp = (callLossesCurrentUp - callLossesAtCurrent) / step;
+        double callGradientCurrentDown = (callLossesCurrentDown - callLossesAtCurrent) / step;
+        double putGradientCurrentUp = (putLossesCurrentUp - putLossesAtCurrent) / step;
+        double putGradientCurrentDown = (putLossesCurrentDown - putLossesAtCurrent) / step;
         
+        Console.WriteLine($"При движении ВВЕРХ на {step:F2} пунктов от текущей цены:");
+        Console.WriteLine(
+            $"  Общие убытки: {(totalLossesCurrentUp - currentPriceLosses >= 0 ? "+" : "")}{totalLossesCurrentUp - currentPriceLosses:N0} (скорость: {totalGradientCurrentUp:N0} на пункт)");
+        Console.WriteLine(
+            $"  Убытки Call: {(callLossesCurrentUp - callLossesAtCurrent >= 0 ? "+" : "")}{callLossesCurrentUp - callLossesAtCurrent:N0} (скорость: {callGradientCurrentUp:N0} на пункт)");
+        Console.WriteLine(
+            $"  Убытки Put: {(putLossesCurrentUp - putLossesAtCurrent >= 0 ? "+" : "")}{putLossesCurrentUp - putLossesAtCurrent:N0} (скорость: {putGradientCurrentUp:N0} на пункт)");
+
+        Console.WriteLine($"\nПри движении ВНИЗ на {step:F2} пунктов от текущей цены:");
+        Console.WriteLine(
+            $"  Общие убытки: {(totalLossesCurrentDown - currentPriceLosses >= 0 ? "+" : "")}{totalLossesCurrentDown - currentPriceLosses:N0} (скорость: {totalGradientCurrentDown:N0} на пункт)");
+        Console.WriteLine(
+            $"  Убытки Call: {(callLossesCurrentDown - callLossesAtCurrent >= 0 ? "+" : "")}{callLossesCurrentDown - callLossesAtCurrent:N0} (скорость: {callGradientCurrentDown:N0} на пункт)");
+        Console.WriteLine(
+            $"  Убытки Put: {(putLossesCurrentDown - putLossesAtCurrent >= 0 ? "+" : "")}{putLossesCurrentDown - putLossesAtCurrent:N0} (скорость: {putGradientCurrentDown:N0} на пункт)");
+
+        // 3. АНАЛИЗ ВЕРОЯТНОГО ДИАПАЗОНА И РАВНОВЕСИЯ
         // Анализ вероятного диапазона цены на основе градиентов убытков
         double painThresholdPercent = 0.10; // 10% прирост убытков как порог
         double painThreshold = maxPainLosses * painThresholdPercent;
@@ -409,14 +457,40 @@ public static class Functions
         double upperBound = EstimateThresholdLevel(data, maxPainStrike, maxPainLosses, painThreshold, step, true);
         double lowerBound = EstimateThresholdLevel(data, maxPainStrike, maxPainLosses, painThreshold, step, false);
 
-        Console.WriteLine($"\nПри увеличении убытков на {painThresholdPercent * 100}% от минимального уровня:");
+        double equilibriumGradients = CalculateGradientEquilibriumLevel(data, maxPainStrike, step);
+
+        Console.WriteLine($"\n3. ДИАПАЗОНЫ И УРОВНИ РАВНОВЕСИЯ:");
+        Console.WriteLine($"При увеличении убытков на {painThresholdPercent * 100}% от минимального уровня:");
         Console.WriteLine($"Вероятный верхний уровень диапазона цены: {upperBound:F2}");
         Console.WriteLine($"Вероятный нижний уровень диапазона цены: {lowerBound:F2}");
         Console.WriteLine($"Ожидаемый диапазон движения цены: {lowerBound:F2} - {upperBound:F2} " +
                           $"({(upperBound - lowerBound) / maxPainStrike * 100:F2}% от Max Pain)");
 
-        // Интерпретация
-        Console.WriteLine("\nИНТЕРПРЕТАЦИЯ:");
+        Console.WriteLine($"Уровень равновесия по скорости прироста убытков: {equilibriumGradients:F2}");
+
+        // Положение текущей цены относительно равновесия
+        Console.WriteLine("\nПоложение текущей цены относительно уровней:");
+        Console.WriteLine(
+            $"Отклонение от уровня равновесия: {(currentPrice - equilibriumGradients >= 0 ? "+" : "")}{currentPrice - equilibriumGradients:F2} ({(currentPrice - equilibriumGradients) / equilibriumGradients * 100:F2}%)");
+
+        if (currentPrice >= lowerBound && currentPrice <= upperBound)
+        {
+            Console.WriteLine("Текущая цена находится в пределах ожидаемого диапазона движения.");
+        }
+        else if (currentPrice < lowerBound)
+        {
+            Console.WriteLine("Текущая цена ниже ожидаемого диапазона движения, возможен возврат в диапазон.");
+        }
+        else // currentPrice > upperBound
+        {
+            Console.WriteLine("Текущая цена выше ожидаемого диапазона движения, возможен возврат в диапазон.");
+        }
+
+        // 4. ИНТЕРПРЕТАЦИЯ
+        Console.WriteLine("\n4. ИНТЕРПРЕТАЦИЯ:");
+
+        // Интерпретация относительно Max Pain
+        Console.WriteLine("\nОТНОСИТЕЛЬНО MAX PAIN:");
         if (Math.Abs(totalGradientUp) > Math.Abs(totalGradientDown) * 1.5)
         {
             Console.WriteLine("Общая скорость прироста убытков значительно выше при движении цены ВВЕРХ от Max Pain. " +
@@ -433,6 +507,27 @@ public static class Functions
         {
             Console.WriteLine("Общая скорость прироста убытков относительно сбалансирована в обоих направлениях. " +
                               "Давление на цену со стороны опционов примерно одинаково как вверх, так и вниз.");
+        }
+
+        // Интерпретация относительно текущей цены
+        Console.WriteLine("\nОТНОСИТЕЛЬНО ТЕКУЩЕЙ ЦЕНЫ:");
+        if (Math.Abs(totalGradientCurrentUp) > Math.Abs(totalGradientCurrentDown) * 1.5)
+        {
+            Console.WriteLine(
+                "Общая скорость прироста убытков значительно выше при движении цены ВВЕРХ от текущей цены. " +
+                "Это указывает на повышенное сопротивление дальнейшему росту цены.");
+        }
+        else if (Math.Abs(totalGradientCurrentDown) > Math.Abs(totalGradientCurrentUp) * 1.5)
+        {
+            Console.WriteLine(
+                "Общая скорость прироста убытков значительно выше при движении цены ВНИЗ от текущей цены. " +
+                "Это указывает на повышенную поддержку текущим уровням цены.");
+        }
+        else
+        {
+            Console.WriteLine(
+                "Общая скорость прироста убытков относительно сбалансирована в обоих направлениях от текущей цены. " +
+                "Давление на цену со стороны опционов примерно одинаково как вверх, так и вниз.");
         }
 
         Console.WriteLine("\nАНАЛИЗ ПО ТИПАМ ОПЦИОНОВ:");
@@ -905,6 +1000,51 @@ public static class Functions
         }
 
         return callLosses + putLosses;
+    }
+
+
+    // Метод для расчета уровня равновесия по скорости прироста убытков
+    private static double CalculateGradientEquilibriumLevel(List<OptionData> data, double startPrice, double step)
+    {
+        // Определяем диапазон цен для поиска
+        double minPrice = data.Min(d => d.Strike);
+        double maxPrice = data.Max(d => d.Strike);
+
+        // Набор цен для расчета градиентов
+        List<(double Price, double CallGradient, double PutGradient)> gradientData = new();
+
+        // Рассчитываем градиенты на сетке цен
+        for (double price = minPrice; price <= maxPrice; price += step * 2)
+        {
+            double callLossesAt = CalculateCallLossesAtPrice(data, price);
+            double putLossesAt = CalculatePutLossesAtPrice(data, price);
+
+            double callLossesUp = CalculateCallLossesAtPrice(data, price + step);
+            double putLossesUp = CalculatePutLossesAtPrice(data, price + step);
+
+            double callGradient = (callLossesUp - callLossesAt) / step;
+            double putGradient = (putLossesUp - putLossesAt) / step;
+
+            gradientData.Add((price, callGradient, putGradient));
+        }
+
+        // Ищем цену, где разница между градиентами минимальна
+        double minDiff = double.MaxValue;
+        double bestPrice = startPrice;
+
+        foreach (var valueTuple in gradientData)
+        {
+            double diff =
+                Math.Abs(valueTuple.CallGradient -
+                         (-valueTuple.PutGradient)); // Разница между ростом Call и снижением Put
+            if (diff < minDiff)
+            {
+                minDiff = diff;
+                bestPrice = valueTuple.Price;
+            }
+        }
+
+        return bestPrice;
     }
 
     #endregion Private
