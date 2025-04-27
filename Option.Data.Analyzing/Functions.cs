@@ -341,7 +341,109 @@ public static class Functions
         }
 
         Console.WriteLine();
+
+        // Анализ скорости прироста убытков
+        AnalyzePainGradient(data, maxPainStrike);
     }
+
+
+    private static void AnalyzePainGradient(List<OptionData> data, double maxPainStrike)
+    {
+        Console.WriteLine("АНАЛИЗ СКОРОСТИ ПРИРОСТА УБЫТКОВ ОТНОСИТЕЛЬНО MAX PAIN");
+
+        // Определяем шаг для расчета скорости изменения (например, 1% от maxPainStrike)
+        double step = maxPainStrike * 0.01;
+
+        // Рассчитываем убытки на уровне MaxPain
+        double maxPainLosses = CalculateTotalLossesAtPrice(data, maxPainStrike);
+        Console.WriteLine($"Убытки на уровне Max Pain ({maxPainStrike:F2}): {maxPainLosses:N0}");
+
+        // Рассчитываем убытки выше MaxPain (для анализа Call опционов)
+        double upLevel = maxPainStrike + step;
+        double upLosses = CalculateTotalLossesAtPrice(data, upLevel);
+        double upGradient = (upLosses - maxPainLosses) / step;
+
+        // Рассчитываем убытки ниже MaxPain (для анализа Put опционов)
+        double downLevel = maxPainStrike - step;
+        double downLosses = CalculateTotalLossesAtPrice(data, downLevel);
+        double downGradient = (downLosses - maxPainLosses) / step;
+
+        Console.WriteLine(
+            $"При движении ВВЕРХ на {step:F2} пунктов убытки увеличиваются на {upLosses - maxPainLosses:N0}");
+        Console.WriteLine($"Скорость прироста убытков вверх: {upGradient:N0} на пункт");
+
+        Console.WriteLine(
+            $"При движении ВНИЗ на {step:F2} пунктов убытки увеличиваются на {downLosses - maxPainLosses:N0}");
+        Console.WriteLine($"Скорость прироста убытков вниз: {downGradient:N0} на пункт");
+
+        // Анализ отдельно для Call и Put опционов
+        double callLossesAtMaxPain = CalculateCallLossesAtPrice(data, maxPainStrike);
+        double callLossesUp = CalculateCallLossesAtPrice(data, upLevel);
+        double callGradientUp = (callLossesUp - callLossesAtMaxPain) / step;
+
+        double putLossesAtMaxPain = CalculatePutLossesAtPrice(data, maxPainStrike);
+        double putLossesDown = CalculatePutLossesAtPrice(data, downLevel);
+        double putGradientDown = (putLossesDown - putLossesAtMaxPain) / step;
+
+        Console.WriteLine("\nДетальный анализ по типам опционов:");
+        Console.WriteLine($"Скорость прироста убытков Call опционов при движении ВВЕРХ: {callGradientUp:N0} на пункт");
+        Console.WriteLine($"Скорость прироста убытков Put опционов при движении ВНИЗ: {putGradientDown:N0} на пункт");
+
+        // Расчет для центров тяжести
+        double totalCallOi = data.Sum(d => d.CallOi);
+        double totalPutOi = data.Sum(d => d.PutOi);
+        double callCenter = data.Sum(d => d.Strike * d.CallOi) / totalCallOi;
+        double putCenter = data.Sum(d => d.Strike * d.PutOi) / totalPutOi;
+
+        // Убытки на центрах тяжести
+        double callCenterLosses = CalculateTotalLossesAtPrice(data, callCenter);
+        double putCenterLosses = CalculateTotalLossesAtPrice(data, putCenter);
+
+        Console.WriteLine($"\nСравнение уровней убытков:");
+        Console.WriteLine($"Max Pain ({maxPainStrike:F2}): {maxPainLosses:N0}");
+        Console.WriteLine($"Call центр тяжести ({callCenter:F2}): {callCenterLosses:N0} " +
+                          $"[{(callCenterLosses - maxPainLosses > 0 ? "+" : "")}{callCenterLosses - maxPainLosses:N0} к Max Pain]");
+        Console.WriteLine($"Put центр тяжести ({putCenter:F2}): {putCenterLosses:N0} " +
+                          $"[{(putCenterLosses - maxPainLosses > 0 ? "+" : "")}{putCenterLosses - maxPainLosses:N0} к Max Pain]");
+
+        // Интерпретация
+        Console.WriteLine("\nИНТЕРПРЕТАЦИЯ:");
+        if (Math.Abs(upGradient) > Math.Abs(downGradient) * 1.5)
+        {
+            Console.WriteLine("Скорость прироста убытков значительно выше при движении цены ВВЕРХ от Max Pain. " +
+                              "Это указывает на повышенное сопротивление при движении цены выше Max Pain и может " +
+                              "создавать давление в сторону снижения.");
+        }
+        else if (Math.Abs(downGradient) > Math.Abs(upGradient) * 1.5)
+        {
+            Console.WriteLine("Скорость прироста убытков значительно выше при движении цены ВНИЗ от Max Pain. " +
+                              "Это указывает на повышенную поддержку при снижении цены ниже Max Pain и может " +
+                              "создавать давление в сторону роста.");
+        }
+        else
+        {
+            Console.WriteLine("Скорость прироста убытков относительно сбалансирована в обоих направлениях. " +
+                              "Давление на цену со стороны опционов примерно одинаково как вверх, так и вниз.");
+        }
+
+        // Анализ вероятного диапазона цены на основе градиентов убытков
+        double painThresholdPercent = 0.10; // 10% прирост убытков как порог
+        double painThreshold = maxPainLosses * painThresholdPercent;
+
+        // Находим примерные границы, где убытки вырастут на 10%
+        double upperBound = EstimateThresholdLevel(data, maxPainStrike, maxPainLosses, painThreshold, step, true);
+        double lowerBound = EstimateThresholdLevel(data, maxPainStrike, maxPainLosses, painThreshold, step, false);
+
+        Console.WriteLine($"\nПри увеличении убытков на {painThresholdPercent * 100}% от минимального уровня:");
+        Console.WriteLine($"Вероятный верхний уровень диапазона цены: {upperBound:F2}");
+        Console.WriteLine($"Вероятный нижний уровень диапазона цены: {lowerBound:F2}");
+        Console.WriteLine($"Ожидаемый диапазон движения цены: {lowerBound:F2} - {upperBound:F2} " +
+                          $"({((upperBound - lowerBound) / maxPainStrike * 100):F2}% от Max Pain)");
+
+        Console.WriteLine();
+    }
+
+   
 
 
     public static void AnalyzeOpenInterest(List<OptionData> data)
@@ -445,6 +547,16 @@ public static class Functions
         Console.WriteLine($"Центр тяжести Put: {putCenter:F2}");
         Console.WriteLine($"Разница между центрами: {Math.Abs(callCenter - putCenter):F2}");
         Console.WriteLine($"Равновестная цена центра тяжести: {gravityPrice:F2}");
+        
+        // Расчет убытков на уровнях центров тяжести
+        double callCenterLosses = CalculateTotalLossesAtPrice(data, callCenter);
+        double putCenterLosses = CalculateTotalLossesAtPrice(data, putCenter);
+        double gravityPriceLosses = CalculateTotalLossesAtPrice(data, gravityPrice);
+
+        Console.WriteLine($"Убытки на уровне центра тяжести Call: {callCenterLosses:N0}");
+        Console.WriteLine($"Убытки на уровне центра тяжести Put: {putCenterLosses:N0}");
+        Console.WriteLine($"Убытки на уровне равновестной цены: {gravityPriceLosses:N0}");
+
 
         // Интерпретация
         if (callCenter > putCenter)
@@ -557,7 +669,7 @@ public static class Functions
         Console.WriteLine(
             $"2. Соотношение Call/Put: {callPutRatio:F2} ({(callPutRatio > 1.2 ? "бычий" : callPutRatio < 0.8 ? "медвежий" : "нейтральный")} настрой)");
         Console.WriteLine($"3. Центры тяжести: Call = {callCenter:F2}, Put = {putCenter:F2}");
-        Console.WriteLine($"4. Уровнь равновесия: {(callCenter + putCenter) / 2 :F2}");
+        Console.WriteLine($"4. Уровнь равновесия: {(callCenter + putCenter) / 2:F2}");
 
         // Финальный прогноз
         Console.WriteLine("\nПРОГНОЗ ДВИЖЕНИЯ ЦЕНЫ:");
@@ -712,6 +824,75 @@ public static class Functions
         }
 
         return 0;
+    }
+    
+     // Вспомогательный метод для оценки уровня, где убытки вырастут на заданное значение
+    private static double EstimateThresholdLevel(List<OptionData> data, double startPrice, double startLosses,
+        double targetIncrease, double stepSize, bool goUp)
+    {
+        double currentPrice = startPrice;
+
+        // Ограничиваем количество итераций, чтобы избежать бесконечного цикла
+        for (int i = 0; i < 100; i++)
+        {
+            currentPrice = goUp ? currentPrice + stepSize : currentPrice - stepSize;
+            double currentLosses = CalculateTotalLossesAtPrice(data, currentPrice);
+
+            if (currentLosses - startLosses >= targetIncrease)
+            {
+                return currentPrice;
+            }
+        }
+
+        // Если не нашли достаточного прироста убытков, возвращаем оценку
+        return currentPrice;
+    }
+
+    // Метод для расчета только убытков Call опционов
+    private static double CalculateCallLossesAtPrice(List<OptionData> data, double price)
+    {
+        double callLosses = 0;
+
+        foreach (OptionData option in data)
+        {
+            // Убытки для держателей Call опционов при данной цене
+            callLosses += option.CallOi * Math.Max(0, price - option.Strike);
+        }
+
+        return callLosses;
+    }
+
+    // Метод для расчета только убытков Put опционов
+    private static double CalculatePutLossesAtPrice(List<OptionData> data, double price)
+    {
+        double putLosses = 0;
+
+        foreach (OptionData option in data)
+        {
+            // Убытки для держателей Put опционов при данной цене
+            putLosses += option.PutOi * Math.Max(0, option.Strike - price);
+        }
+
+        return putLosses;
+    }
+
+
+    // Вспомогательный метод для расчета убытков при заданной цене
+    private static double CalculateTotalLossesAtPrice(List<OptionData> data, double price)
+    {
+        double callLosses = 0;
+        double putLosses = 0;
+
+        foreach (OptionData option in data)
+        {
+            // Убытки для держателей Call опционов при данной цене
+            callLosses += option.CallOi * Math.Max(0, price - option.Strike);
+
+            // Убытки для держателей Put опционов при данной цене
+            putLosses += option.PutOi * Math.Max(0, option.Strike - price);
+        }
+
+        return callLosses + putLosses;
     }
 
     #endregion Private
