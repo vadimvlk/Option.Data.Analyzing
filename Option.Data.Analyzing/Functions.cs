@@ -410,8 +410,7 @@ public static class Functions
         double currentPriceLosses = CalculateTotalLossesAtPrice(data, currentPrice);
         double callLossesAtCurrent = CalculateCallLossesAtPrice(data, currentPrice);
         double putLossesAtCurrent = CalculatePutLossesAtPrice(data, currentPrice);
-
-     
+        
         // Рассчитываем убытки выше текущей цены
         double currentUpLevel = currentPrice + step;
         double totalLossesCurrentUp = CalculateTotalLossesAtPrice(data, currentUpLevel);
@@ -431,7 +430,7 @@ public static class Functions
         double callGradientCurrentDown = (callLossesCurrentDown - callLossesAtCurrent) / step;
         double putGradientCurrentUp = (putLossesCurrentUp - putLossesAtCurrent) / step;
         double putGradientCurrentDown = (putLossesCurrentDown - putLossesAtCurrent) / step;
-        
+
         Console.WriteLine($"При движении ВВЕРХ на {step:F2} пунктов от текущей цены:");
         Console.WriteLine(
             $"  Общие убытки: {(totalLossesCurrentUp - currentPriceLosses >= 0 ? "+" : "")}{totalLossesCurrentUp - currentPriceLosses:N0} (скорость: {totalGradientCurrentUp:N0} на пункт)");
@@ -449,7 +448,6 @@ public static class Functions
             $"  Убытки Put: {(putLossesCurrentDown - putLossesAtCurrent >= 0 ? "+" : "")}{putLossesCurrentDown - putLossesAtCurrent:N0} (скорость: {putGradientCurrentDown:N0} на пункт)");
 
         // 3. АНАЛИЗ ВЕРОЯТНОГО ДИАПАЗОНА И РАВНОВЕСИЯ
-        // Анализ вероятного диапазона цены на основе градиентов убытков
         double painThresholdPercent = 0.10; // 10% прирост убытков как порог
         double painThreshold = maxPainLosses * painThresholdPercent;
 
@@ -457,7 +455,7 @@ public static class Functions
         double upperBound = EstimateThresholdLevel(data, maxPainStrike, maxPainLosses, painThreshold, step, true);
         double lowerBound = EstimateThresholdLevel(data, maxPainStrike, maxPainLosses, painThreshold, step, false);
 
-        double equilibriumGradients = CalculateGradientEquilibriumLevel(data, maxPainStrike, step);
+        double equilibriumGradients = CalculateGradientEquilibriumLevel(data, currentPrice, step);
 
         Console.WriteLine($"\n3. ДИАПАЗОНЫ И УРОВНИ РАВНОВЕСИЯ:");
         Console.WriteLine($"При увеличении убытков на {painThresholdPercent * 100}% от минимального уровня:");
@@ -1007,44 +1005,76 @@ public static class Functions
     private static double CalculateGradientEquilibriumLevel(List<OptionData> data, double startPrice, double step)
     {
         // Определяем диапазон цен для поиска
-        double minPrice = data.Min(d => d.Strike);
-        double maxPrice = data.Max(d => d.Strike);
+        double minPrice = data.Min(d => d.Strike) * 0.9; // Расширяем диапазон на 10% в обе стороны
+        double maxPrice = data.Max(d => d.Strike) * 1.1;
 
         // Набор цен для расчета градиентов
-        List<(double Price, double CallGradient, double PutGradient)> gradientData = new();
+        List<(double Price, double TotalGradient, double CallGradient, double PutGradient)> gradientData = new();
+
+        // Определяем более мелкий шаг для более точного поиска
+        double searchStep = step / 2;
 
         // Рассчитываем градиенты на сетке цен
-        for (double price = minPrice; price <= maxPrice; price += step * 2)
+        for (double price = minPrice; price <= maxPrice; price += searchStep)
         {
+            // Рассчитываем убытки при текущем уровне цены
+            double totalLossesAt = CalculateTotalLossesAtPrice(data, price);
             double callLossesAt = CalculateCallLossesAtPrice(data, price);
             double putLossesAt = CalculatePutLossesAtPrice(data, price);
 
-            double callLossesUp = CalculateCallLossesAtPrice(data, price + step);
-            double putLossesUp = CalculatePutLossesAtPrice(data, price + step);
+            // Рассчитываем убытки при повышенном уровне цены
+            double totalLossesUp = CalculateTotalLossesAtPrice(data, price + searchStep);
+            double callLossesUp = CalculateCallLossesAtPrice(data, price + searchStep);
+            double putLossesUp = CalculatePutLossesAtPrice(data, price + searchStep);
 
-            double callGradient = (callLossesUp - callLossesAt) / step;
-            double putGradient = (putLossesUp - putLossesAt) / step;
+            // Вычисляем градиенты
+            double totalGradient = (totalLossesUp - totalLossesAt) / searchStep;
+            double callGradient = (callLossesUp - callLossesAt) / searchStep;
+            double putGradient = (putLossesUp - putLossesAt) / searchStep;
 
-            gradientData.Add((price, callGradient, putGradient));
+            gradientData.Add((price, totalGradient, callGradient, putGradient));
         }
 
-        // Ищем цену, где разница между градиентами минимальна
-        double minDiff = double.MaxValue;
-        double bestPrice = startPrice;
+        // 1. Ищем точку, где общий градиент равен нулю (или ближайшее к нулю)
+        double minTotalGradient = double.MaxValue;
+        double equilibriumPrice = startPrice;
 
-        foreach (var valueTuple in gradientData)
+        foreach (var tuple in gradientData)
         {
-            double diff =
-                Math.Abs(valueTuple.CallGradient -
-                         (-valueTuple.PutGradient)); // Разница между ростом Call и снижением Put
-            if (diff < minDiff)
+            double absGradient = Math.Abs(tuple.TotalGradient);
+            if (absGradient < minTotalGradient)
             {
-                minDiff = diff;
-                bestPrice = valueTuple.Price;
+                minTotalGradient = absGradient;
+                equilibriumPrice = tuple.Price;
             }
         }
 
-        return bestPrice;
+        // 2. Дополнительно ищем точки перехода градиента через ноль для более точного определения
+        for (int i = 1; i < gradientData.Count; i++)
+        {
+            var prev = gradientData[i - 1];
+            var curr = gradientData[i];
+
+            // Проверяем, меняет ли градиент знак между этими точками
+            if ((prev.TotalGradient > 0 && curr.TotalGradient < 0) ||
+                (prev.TotalGradient < 0 && curr.TotalGradient > 0))
+            {
+                // Линейная интерполяция для нахождения более точного значения
+                double ratio = Math.Abs(prev.TotalGradient) /
+                               (Math.Abs(prev.TotalGradient) + Math.Abs(curr.TotalGradient));
+                double interpolatedPrice = prev.Price + ratio * (curr.Price - prev.Price);
+
+                // Если эта точка ближе к нулевому градиенту, обновляем результат
+                double interpolatedGradient = prev.TotalGradient + ratio * (curr.TotalGradient - prev.TotalGradient);
+                if (Math.Abs(interpolatedGradient) < minTotalGradient)
+                {
+                    minTotalGradient = Math.Abs(interpolatedGradient);
+                    equilibriumPrice = interpolatedPrice;
+                }
+            }
+        }
+
+       return equilibriumPrice;
     }
 
     #endregion Private
