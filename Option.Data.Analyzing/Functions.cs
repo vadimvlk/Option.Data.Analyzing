@@ -666,7 +666,6 @@ public static class Functions
 
         Console.WriteLine($"Центр тяжести Call: {callCenter:F2}");
         Console.WriteLine($"Центр тяжести Put: {putCenter:F2}");
-        Console.WriteLine($"Разница между центрами: {Math.Abs(callCenter - putCenter):F2}");
         Console.WriteLine($"Равновестная цена центра тяжести: {gravityPrice:F2}");
 
         // Расчет убытков на уровнях центров тяжести
