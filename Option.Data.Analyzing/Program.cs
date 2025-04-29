@@ -13,6 +13,10 @@ string filePath = @"C:\Users\vadim\Downloads\data.csv";
 if (args.Length > 0)
 {
     filePath = args[0];
+    if (!File.Exists(filePath))
+    {
+        throw new FileNotFoundException("The specified file does not exist.", filePath);
+    }
 }
 
 try
