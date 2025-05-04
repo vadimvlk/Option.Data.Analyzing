@@ -20,15 +20,18 @@ public static class Functions
 
         Console.WriteLine("Анализ структуры файла...");
 
-        // Получаем индексы нужных колонок из заголовка (разделитель - точка с запятой)
+        // Получаем индексы нужных колонок из заголовка (разделитель - точка с запятой).
         string[] headers = lines[0].Split(';');
 
         int callOiIndex = FindColumnIndex(headers, "CALL: Открыт.позиций");
         int strikeIndex = FindColumnIndex(headers, "СТРАЙК");
         int ivIndex = FindColumnIndex(headers, "IV");
         int putOiIndex = FindColumnIndex(headers, "PUT: Открыт. позиций");
-        int priceСallIndex = FindColumnIndex(headers, "CALL: Теоретическая цена");
+        int priceСallIndex = FindColumnIndex(headers, "CALL: Теоретическая цена"); 
         int pricePutIndex = FindColumnIndex(headers, "PUT: Теоретическая цена");
+        
+        //int priceСallIndex = FindColumnIndex(headers, "CALL: Расчетная цена");
+        //int pricePutIndex = FindColumnIndex(headers, "PUT: Расчетная цена");
 
         Console.WriteLine("Индексы колонок найдены. Обработка данных...");
 
@@ -82,8 +85,7 @@ public static class Functions
             Console.WriteLine("Первые 5 строк данных:");
             foreach (OptionData item in result.Take(5))
             {
-                Console.WriteLine(
-                    $"Strike: {item.Strike}, Call OI: {item.CallOi}, Put OI: {item.PutOi}, IV: {item.Iv}");
+                Console.WriteLine($"Strike: {item.Strike}, Call OI: {item.CallOi}, Put OI: {item.PutOi}, IV: {item.Iv}");
             }
 
             Console.WriteLine();
