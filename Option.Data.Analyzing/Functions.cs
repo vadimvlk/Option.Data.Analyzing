@@ -887,8 +887,8 @@ public static class Functions
         double minPrice = minStrike * (1 - rangeExtensionPercent);
         double maxPrice = maxStrike * (1 + rangeExtensionPercent);
 
-        // Шаг для анализа (примерно 0.5% от текущей цены)
-        double step = currentPrice * 0.005;
+        // Шаг для анализа (примерно 0.1% от текущей цены)
+        double step = currentPrice * 0.001;
 
         // 3. Анализируем профит/убыток продавца на разных уровнях цены
         List<(double Price, double TotalPnL, double CallPnL, double PutPnL)> pnlData = new();
