@@ -19,9 +19,12 @@ public class ApplicationDbContext (DbContextOptions<ApplicationDbContext> option
         // Configure OptionData entity
         modelBuilder.Entity<Shared.Poco.OptionData>(entity =>
         {
-            // Create a composite key since there's no explicit ID
-            entity.HasKey(e => new { e.Strike, e.Expiration, e.Type, e.Currency });
-            
+            entity.HasKey(a => a.Id);
+
+            entity.Property(a => a.Id)
+                .UseIdentityAlwaysColumn()
+                .HasIdentityOptions(startValue: 1);
+
             entity.Property(e => e.InstrumentName)
                 .IsRequired()
                 .HasMaxLength(100);
@@ -32,9 +35,9 @@ public class ApplicationDbContext (DbContextOptions<ApplicationDbContext> option
             
             entity.Property(e => e.CallOi)
                 .HasColumnType("decimal(18, 8)");
-          
+
             entity.Property(e => e.Strike)
-                .HasColumnType("decimal(18, 8)");
+                .IsRequired();
           
             entity.Property(e => e.Iv)
                 .HasColumnType("decimal(18, 8)");
@@ -47,18 +50,6 @@ public class ApplicationDbContext (DbContextOptions<ApplicationDbContext> option
           
             entity.Property(e => e.PutPrice)
                 .HasColumnType("decimal(18, 8)");
-          
-            entity.Property(e => e.CallDelta)
-                .HasColumnType("decimal(18, 8)");
-          
-            entity.Property(e => e.CallGamma)
-                .HasColumnType("decimal(18, 8)");
-          
-            entity.Property(e => e.PutDelta)
-                .HasColumnType("decimal(18, 8)");
-          
-            entity.Property(e => e.PutGamma)
-                .HasColumnType("decimal(18, 8)");
     
             // Configure enum properties
             entity.Property(e => e.Type)
@@ -69,10 +60,13 @@ public class ApplicationDbContext (DbContextOptions<ApplicationDbContext> option
                 .IsRequired()
                 .HasConversion<string>();
             
+            entity.HasIndex(e => new {e.Currency, e.Type, e.Strike, e.Expiration });
+            entity.HasIndex(e => e.Currency);
+            entity.HasIndex(e => e.Type);
             entity.HasIndex(e => e.Strike);
             entity.HasIndex(e => e.Expiration);
-            entity.HasIndex(e => e.Type);
-            entity.HasIndex(e => e.Currency);
+            
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
         });
 
     }

@@ -13,6 +13,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Option.Data.Shared", "Optio
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Option.Data.Database", "Option.Data.Database\Option.Data.Database.csproj", "{65C65B34-1AF0-43D0-BC18-EDDFDF169323}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Data", "Data", "{817FB107-DF9E-4FE5-BBEB-5EBBDA0A60F2}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -35,5 +37,9 @@ Global
 		{65C65B34-1AF0-43D0-BC18-EDDFDF169323}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{65C65B34-1AF0-43D0-BC18-EDDFDF169323}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{65C65B34-1AF0-43D0-BC18-EDDFDF169323}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{65C65B34-1AF0-43D0-BC18-EDDFDF169323} = {817FB107-DF9E-4FE5-BBEB-5EBBDA0A60F2}
+		{682C3E43-EA94-46D2-A2E2-6F8E29446CCD} = {817FB107-DF9E-4FE5-BBEB-5EBBDA0A60F2}
 	EndGlobalSection
 EndGlobal

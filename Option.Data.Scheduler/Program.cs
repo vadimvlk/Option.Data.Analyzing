@@ -1,12 +1,14 @@
-using Option.Data.Database;
 using Quartz;
-using Option.Data.Scheduler.Jobs;
 using Option.Data.Shared;
+using Option.Data.Database;
+using Option.Data.Scheduler;
+using Option.Data.Scheduler.Jobs;
 
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
-builder.RegisterDeribit();
+builder.Services.AddAsyncInitializer<MappingInitializer>();
 
+builder.RegisterDeribit();
 
 //Register PostgresSql.
 builder.Services.RegisterData(builder.Configuration);
@@ -29,4 +31,8 @@ builder.Services.AddQuartz(q =>
 builder.Services.AddQuartzHostedService(q => q.WaitForJobsToComplete = true);
 
 IHost host = builder.Build();
-host.Run();
+
+// Initialize async initializer.
+await host.InitAsync();
+
+await host.RunAsync();
