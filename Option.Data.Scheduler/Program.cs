@@ -1,7 +1,10 @@
 using Quartz;
 using Option.Data.Scheduler.Jobs;
+using Option.Data.Shared;
 
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
+
+builder.RegisterDeribit();
 
 builder.Services.AddQuartz(q =>
 {
