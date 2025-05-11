@@ -1,0 +1,7 @@
+﻿services:
+  option.data.scheduler:
+    image: option.data.scheduler
+    build:
+      context: .
+      dockerfile: Option.Data.Scheduler/Dockerfile
+
