@@ -19,6 +19,7 @@
     </ItemGroup>
 
     <ItemGroup>
+      <ProjectReference Include="..\Option.Data.Database\Option.Data.Database.csproj" />
       <ProjectReference Include="..\Option.Data.Shared\Option.Data.Shared.csproj" />
     </ItemGroup>
 </Project>

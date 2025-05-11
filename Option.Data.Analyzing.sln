@@ -11,6 +11,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Option.Data.Shared", "Option.Data.Shared\Option.Data.Shared.csproj", "{682C3E43-EA94-46D2-A2E2-6F8E29446CCD}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Option.Data.Database", "Option.Data.Database\Option.Data.Database.csproj", "{65C65B34-1AF0-43D0-BC18-EDDFDF169323}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -29,5 +31,9 @@ Global
 		{682C3E43-EA94-46D2-A2E2-6F8E29446CCD}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{682C3E43-EA94-46D2-A2E2-6F8E29446CCD}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{682C3E43-EA94-46D2-A2E2-6F8E29446CCD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{65C65B34-1AF0-43D0-BC18-EDDFDF169323}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{65C65B34-1AF0-43D0-BC18-EDDFDF169323}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{65C65B34-1AF0-43D0-BC18-EDDFDF169323}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{65C65B34-1AF0-43D0-BC18-EDDFDF169323}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

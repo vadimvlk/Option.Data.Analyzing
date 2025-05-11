@@ -1,3 +1,4 @@
+using Option.Data.Database;
 using Quartz;
 using Option.Data.Scheduler.Jobs;
 using Option.Data.Shared;
@@ -5,6 +6,10 @@ using Option.Data.Shared;
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
 builder.RegisterDeribit();
+
+
+//Register PostgresSql.
+builder.Services.RegisterData(builder.Configuration);
 
 builder.Services.AddQuartz(q =>
 {
