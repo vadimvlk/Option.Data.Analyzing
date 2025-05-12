@@ -1,8 +1,16 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace Option.Data.Shared.Poco;
 
 // ReSharper disable InconsistentNaming
-public enum CurrencyType
+public class CurrencyType
 {
-    BTC = 1,
-    ETH,
+    public int Id { get; set; }
+    
+    [Required]
+    [MaxLength(50)]
+    public string Name { get; set; }
+    
+    // Navigation property
+    public virtual ICollection<OptionData> Options { get; set; }
 }

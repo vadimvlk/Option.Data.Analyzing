@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using Option.Data.Database;
 using Option.Data.Shared.Dto;
 using Option.Data.Shared.Poco;
+using Microsoft.EntityFrameworkCore;
 using Option.Data.Shared.Configuration;
 
 namespace Option.Data.Scheduler.Jobs;
@@ -15,31 +16,40 @@ public class DeribitJob : IJob
     private readonly ILogger<DeribitJob> _logger;
     private readonly HttpClient _httpClient;
     private readonly ApplicationDbContext _dbContext;
+    private readonly DateTimeOffset _dateTimeOffset;
 
-    public DeribitJob(ILogger<DeribitJob> logger, IHttpClientFactory httpClientFactory, ApplicationDbContext dbContext)
+    public DeribitJob(ILogger<DeribitJob> logger, 
+        IHttpClientFactory httpClientFactory, 
+        ApplicationDbContext dbContext)
     {
         _logger = logger;
         _dbContext = dbContext;
         _httpClient = httpClientFactory.CreateClient(DeribitConfig.ClientName);
+        _dateTimeOffset = DateTimeOffset.UtcNow;
     }
 
     public async Task Execute(IJobExecutionContext context)
     {
-        _logger.LogInformation("DeribitJob executed at: {time}", DateTimeOffset.Now);
+        
+        _logger.LogInformation("DeribitJob executed at: {time}", _dateTimeOffset);
 
-        foreach (CurrencyType currency in Enum.GetValues(typeof(CurrencyType)))
+        List<string> currencies = await _dbContext.CurrencyType
+            .Select(x => x.Name)
+            .ToListAsync();
+
+        foreach (string currency in currencies)
         {
             _logger.LogInformation("Processing currency: {currency}", currency);
 
             var queryParams = HttpUtility.ParseQueryString(string.Empty);
-            queryParams["currency"] = currency.ToString();
+            queryParams["currency"] = currency;
             queryParams["kind"] = "option";
-            string endpoint = $"get_book_summary_by_currency?{queryParams}";
+            string bookSummaryEndpoint = $"get_book_summary_by_currency?{queryParams}";
 
             try
             {
                 BookSummaryByInstrument? summaryData =
-                    await _httpClient.GetFromJsonAsync<BookSummaryByInstrument>(endpoint);
+                    await _httpClient.GetFromJsonAsync<BookSummaryByInstrument>(bookSummaryEndpoint);
                 if (summaryData?.Data == null || summaryData.Data.Count == 0)
                 {
                     _logger.LogWarning("No data returned for {currency}", currency);
@@ -47,7 +57,9 @@ public class DeribitJob : IJob
                 }
 
                 // Parse and map data
-                List<OptionData> optionData = ParseAndMapBookSummary(summaryData.Data);
+                List<OptionData> optionData = await ParseAndMapBookSummaryAsync(summaryData.Data);
+                
+              
 
 
                 await _dbContext.OptionData.AddRangeAsync(optionData);
@@ -64,48 +76,52 @@ public class DeribitJob : IJob
         }
     }
 
-    private List<OptionData> ParseAndMapBookSummary(List<BookSummaryData> summaryDataList)
+    private async Task<List<OptionData>> ParseAndMapBookSummaryAsync(List<BookSummaryData> summaryDataList)
     {
         List<OptionData> optionDataList = new();
 
-       foreach (var data in summaryDataList.Where(data => !string.IsNullOrEmpty(data.InstrumentName)))
-       {
-           // Parse instrument name
-           var (parsedCurrency, expiration, strike, optionType) = ParseInstrumentName(data.InstrumentName!);
+        Dictionary<string, OptionType> optionTypes = await _dbContext.OptionType.ToDictionaryAsync(o => o.Name);
+        Dictionary<string, CurrencyType> currencyTypes = await _dbContext.CurrencyType.ToDictionaryAsync(c => c.Name);
+        
+        
+       
+       
 
-           // Create option data
-           var optionData = data.Adapt<OptionData>();
 
-           // Set values from the parsed instrument name
-           optionData.Currency = parsedCurrency;
-           optionData.Strike = strike;
-           optionData.Type = optionType;
-           optionData.Expiration = expiration;
-           optionData.InstrumentName = data.InstrumentName!;
+        foreach (var data in summaryDataList.Where(data => !string.IsNullOrEmpty(data.InstrumentName)))
+        {
+            // Parse instrument name
+            var (parsedCurrency, expiration, strike, optionType) = ParseInstrumentName(data.InstrumentName!);
 
-           // Set call/put specific data
-           if (optionType == OptionType.Call)
-           {
-               optionData.CallOi = data.OpenInterest ?? 0;
-               optionData.PutOi = 0;
-               optionData.CallPrice = (data.MarkPrice ?? 0) * (data.UnderlyingPrice ?? 0);
-               optionData.PutPrice = 0;
-           }
-           else
-           {
-               optionData.PutOi = data.OpenInterest ?? 0;
-               optionData.CallOi = 0;
-               optionData.PutPrice = (data.MarkPrice ?? 0) * (data.UnderlyingPrice ?? 0);
-               optionData.CallPrice = 0;
-           }
+            // Create option data
+            OptionData optionData = data.Adapt<OptionData>();
 
-           optionDataList.Add(optionData);
-       }
+            // Set values from the parsed instrument name
+            optionData.CurrencyTypeId = currencyTypes[parsedCurrency].Id;
+
+            optionData.Strike = strike;
+            optionData.OptionTypeId = optionTypes[optionType].Id;
+
+            optionData.Expiration = expiration;
+            optionData.CreatedAt = _dateTimeOffset;
+            
+            // GET GREEKS new API CALL.
+            var queryParams = HttpUtility.ParseQueryString(string.Empty);
+            queryParams["instrument_name"] = optionData.InstrumentName;
+            
+            OrderBookByInstrument? orderBook =
+                await _httpClient.GetFromJsonAsync<OrderBookByInstrument>($"get_order_book?{queryParams}");
+
+            optionData.Delta = orderBook?.Data?.Greeks?.Delta ?? 0;
+            optionData.Gamma = orderBook?.Data?.Greeks?.Gamma ?? 0;
+
+            optionDataList.Add(optionData);
+        }
 
         return optionDataList;
     }
 
-    private static (CurrencyType Currency, string Expiration, int Strike, OptionType Type) ParseInstrumentName(
+    private static (string Currency, string Expiration, int Strike, string Type) ParseInstrumentName(
         string instrumentName)
     {
         // Example: "ETH-25JUL25-2400-C"
@@ -116,34 +132,25 @@ public class DeribitJob : IJob
             throw new ArgumentException($"Invalid instrument name format: {instrumentName}");
         }
 
-        // Parse currency
-        if (!Enum.TryParse(parts[0], out CurrencyType currency))
-        {
-            throw new ArgumentOutOfRangeException($"Unknown currency: {parts[0]}");
-        }
+        // Parse currency (ETH)
+        string currency = parts[0];
 
         // Parse expiration (25JUL25)
         string expiration = parts[1];
 
-        // Parse strike
+        // Parse strike (2400)
         if (!int.TryParse(parts[2], out int strike))
         {
             throw new ArgumentException($"Invalid strike price: {parts[2]}");
         }
 
-        // Parse option type (C or P)
-        OptionType optionType;
-        switch (parts[3])
+        // Parse Type (C)
+        string optionType = parts[3] switch
         {
-            case "C":
-                optionType = OptionType.Call;
-                break;
-            case "P":
-                optionType = OptionType.Put;
-                break;
-            default:
-                throw new ArgumentOutOfRangeException($"Unknown option type: {parts[3]}");
-        }
+            "C" => "Call",
+            "P" => "Put",
+            _ => throw new ArgumentOutOfRangeException($"Unknown option type: {parts[3]}")
+        };
 
         return (currency, expiration, strike, optionType);
     }

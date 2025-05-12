@@ -1,14 +1,16 @@
-﻿namespace Option.Data.Shared.Poco;
+﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+
+namespace Option.Data.Shared.Poco;
 
 public class OptionData
 {
-    
-    public long Id { get; set; }  
-    
+    public long Id { get; set; }
+
     /// <summary>
-    /// Открытые позиции Call.
+    /// Открытые позиции.
     /// </summary>
-    public double CallOi { get; set; }
+    public double OpenInterest { get; set; }
 
     /// <summary>
     ///  Страйк.
@@ -19,77 +21,62 @@ public class OptionData
     /// Подразумеваемая волатильность.
     /// </summary>
     public double Iv { get; set; }
-    
+
     /// <summary>
     ///  Тип опциона.
     /// </summary>
+    public int OptionTypeId { get; set; }
+
+    [ForeignKey("OptionTypeId")]
     public OptionType Type { get; set; }
-    
+
     /// <summary>
     ///  Тип базовой валюты опциона.
     /// </summary>
+    public int CurrencyTypeId { get; set; }
+
+    [ForeignKey("CurrencyTypeId")]
     public CurrencyType Currency { get; set; }
-    
+
+
     /// <summary>
     ///  Имя контракта.
     /// </summary>
+    [Required]
+    [Column(TypeName = "citext")]
     public string InstrumentName { get; set; }
-    
+
     /// <summary>
     ///  Код экспирации.
     /// </summary>
+    [Required]
+    [Column(TypeName = "citext")]
     public string Expiration { get; set; }
-    
+
     /// <summary>
     /// Стоимость контракта.
     /// </summary>
-    public double UnderlyingPrice { get; set; } 
-    
+    public double UnderlyingPrice { get; set; }
+
     /// <summary>
     /// Ожидаемая стоимость на дату поставки.
     /// </summary>
-    public double DeliveryPrice { get; set; } 
-    
+    public double DeliveryPrice { get; set; }
+
     /// <summary>
     /// Теоретическая стоимость в базовой валюте.
     /// </summary>
-    public double MarkPrice { get; set; } 
+    public double MarkPrice { get; set; }
 
     /// <summary>
-    ///  Открытые позиции Put.
+    /// Дельта опциона.
     /// </summary>
-    public double PutOi { get; set; }
+    public double Delta { get; set; }
 
     /// <summary>
-    /// Теоретическая стоимость Call. MarkPrice * UnderlyingPrice
+    ///  Гамма опциона.
     /// </summary>
-    public double CallPrice { get; set; }
+    public double Gamma { get; set; }
 
-    /// <summary>
-    /// Теоретическая стоимость Put. MarkPrice * UnderlyingPrice
-    /// </summary>
-    public double PutPrice { get; set; }
-
-    /// <summary>
-    /// Дельта опциона Call.
-    /// </summary>
-    public double? CallDelta { get; set; }
-
-    /// <summary>
-    ///  Гамма опциона Call.
-    /// </summary>
-    public double? CallGamma { get; set; }
-
-    /// <summary>
-    /// Дельта опциона Put.
-    /// </summary>
-    public double? PutDelta { get; set; }
-
-    /// <summary>
-    ///  Гамма опциона Put.
-    /// </summary>
-    public double? PutGamma { get; set; }
-    
     public DateTimeOffset CreatedAt { get; set; }
-    
 }
