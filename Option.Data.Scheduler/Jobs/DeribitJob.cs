@@ -18,8 +18,8 @@ public class DeribitJob : IJob
     private readonly ApplicationDbContext _dbContext;
     private readonly DateTimeOffset _dateTimeOffset;
 
-    public DeribitJob(ILogger<DeribitJob> logger, 
-        IHttpClientFactory httpClientFactory, 
+    public DeribitJob(ILogger<DeribitJob> logger,
+        IHttpClientFactory httpClientFactory,
         ApplicationDbContext dbContext)
     {
         _logger = logger;
@@ -30,7 +30,6 @@ public class DeribitJob : IJob
 
     public async Task Execute(IJobExecutionContext context)
     {
-        
         _logger.LogInformation("DeribitJob executed at: {time}", _dateTimeOffset);
 
         List<string> currencies = await _dbContext.CurrencyType
@@ -50,7 +49,7 @@ public class DeribitJob : IJob
             {
                 BookSummaryByInstrument? summaryData =
                     await _httpClient.GetFromJsonAsync<BookSummaryByInstrument>(bookSummaryEndpoint);
-                
+
                 if (summaryData?.Data == null || summaryData.Data.Count == 0)
                 {
                     _logger.LogWarning("No data returned for {currency}", currency);
@@ -80,7 +79,7 @@ public class DeribitJob : IJob
 
         Dictionary<string, OptionType> optionTypes = await _dbContext.OptionType.ToDictionaryAsync(o => o.Name);
         Dictionary<string, CurrencyType> currencyTypes = await _dbContext.CurrencyType.ToDictionaryAsync(c => c.Name);
-        
+
         foreach (var data in summaryDataList.Where(data => !string.IsNullOrEmpty(data.InstrumentName)))
         {
             // Parse instrument name
@@ -97,11 +96,11 @@ public class DeribitJob : IJob
 
             deribitData.Expiration = expiration;
             deribitData.CreatedAt = _dateTimeOffset;
-            
+
             // GET GREEKS new API CALL.
             var queryParams = HttpUtility.ParseQueryString(string.Empty);
             queryParams["instrument_name"] = deribitData.InstrumentName;
-            
+
             OrderBookByInstrument? orderBook =
                 await _httpClient.GetFromJsonAsync<OrderBookByInstrument>($"get_order_book?{queryParams}");
 
@@ -109,6 +108,7 @@ public class DeribitJob : IJob
             deribitData.Gamma = orderBook?.Data?.Greeks?.Gamma ?? 0;
 
             optionDataList.Add(deribitData);
+            await Task.Delay(500);
         }
 
         return optionDataList;
