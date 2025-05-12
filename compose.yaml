@@ -1,7 +1,31 @@
-﻿services:
-  option.data.scheduler:
-    image: option.data.scheduler
-    build:
-      context: .
-      dockerfile: Option.Data.Scheduler/Dockerfile
+﻿version: '3.8'
 
+services:
+  postgres:
+    container_name: postgres
+    image: postgres
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: 9wV8u7fxGyAhENL93
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data  # Persisting database data
+    networks:
+      - share-network
+
+  scheduler:
+    container_name: scheduler
+    image: vadimvlk/private:scheduler
+    restart: always
+    volumes:
+      - /var/deribit/appsettings.json:/app/appsettings.json
+    networks:
+      - share-network
+
+networks:
+  share-network:
+    driver: bridge
+
+volumes:
+  postgres_data:  # Volume to persist PostgresSQL data.
