@@ -44,7 +44,7 @@ namespace Option.Data.Database.Migrations.ApplicationDb
                 });
 
             migrationBuilder.CreateTable(
-                name: "OptionData",
+                name: "DeribitData",
                 columns: table => new
                 {
                     Id = table.Column<long>(type: "bigint", nullable: false)
@@ -66,15 +66,15 @@ namespace Option.Data.Database.Migrations.ApplicationDb
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_OptionData", x => x.Id);
+                    table.PrimaryKey("PK_DeribitData", x => x.Id);
                     table.ForeignKey(
-                        name: "FK_OptionData_CurrencyType_CurrencyTypeId",
+                        name: "FK_DeribitData_CurrencyType_CurrencyTypeId",
                         column: x => x.CurrencyTypeId,
                         principalTable: "CurrencyType",
                         principalColumn: "Id",
                         onDelete: ReferentialAction.Restrict);
                     table.ForeignKey(
-                        name: "FK_OptionData_OptionType_OptionTypeId",
+                        name: "FK_DeribitData_OptionType_OptionTypeId",
                         column: x => x.OptionTypeId,
                         principalTable: "OptionType",
                         principalColumn: "Id",
@@ -100,28 +100,28 @@ namespace Option.Data.Database.Migrations.ApplicationDb
                 });
 
             migrationBuilder.CreateIndex(
-                name: "IX_OptionData_CurrencyTypeId",
-                table: "OptionData",
+                name: "IX_DeribitData_CurrencyTypeId",
+                table: "DeribitData",
                 column: "CurrencyTypeId");
 
             migrationBuilder.CreateIndex(
-                name: "IX_OptionData_CurrencyTypeId_OptionTypeId_Strike_Expiration",
-                table: "OptionData",
+                name: "IX_DeribitData_CurrencyTypeId_OptionTypeId_Strike_Expiration",
+                table: "DeribitData",
                 columns: new[] { "CurrencyTypeId", "OptionTypeId", "Strike", "Expiration" });
 
             migrationBuilder.CreateIndex(
-                name: "IX_OptionData_Expiration",
-                table: "OptionData",
+                name: "IX_DeribitData_Expiration",
+                table: "DeribitData",
                 column: "Expiration");
 
             migrationBuilder.CreateIndex(
-                name: "IX_OptionData_OptionTypeId",
-                table: "OptionData",
+                name: "IX_DeribitData_OptionTypeId",
+                table: "DeribitData",
                 column: "OptionTypeId");
 
             migrationBuilder.CreateIndex(
-                name: "IX_OptionData_Strike",
-                table: "OptionData",
+                name: "IX_DeribitData_Strike",
+                table: "DeribitData",
                 column: "Strike");
         }
 
@@ -129,7 +129,7 @@ namespace Option.Data.Database.Migrations.ApplicationDb
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropTable(
-                name: "OptionData");
+                name: "DeribitData");
 
             migrationBuilder.DropTable(
                 name: "CurrencyType");

@@ -23,7 +23,6 @@ builder.Services.AddQuartz(q =>
         .ForJob(jobKey)
         .WithIdentity(nameof(DeribitJob))
         .WithCronSchedule("* * * * * ?"));
-
        // .WithCronSchedule("0 0 0/3 * * ?")); // Run every 3 hours starting at 00:00 UTC
 
 });

@@ -1,8 +1,9 @@
 using System.ComponentModel.DataAnnotations;
+using JetBrains.Annotations;
 
 namespace Option.Data.Shared.Poco;
 
-// ReSharper disable InconsistentNaming
+[UsedImplicitly]
 public class CurrencyType
 {
     public int Id { get; set; }
@@ -12,5 +13,5 @@ public class CurrencyType
     public string Name { get; set; }
     
     // Navigation property
-    public virtual ICollection<OptionData> Options { get; set; }
+    public virtual ICollection<DeribitData> Options { get; set; }
 }

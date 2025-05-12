@@ -53,7 +53,7 @@ namespace Option.Data.Database.Migrations.ApplicationDb
                         });
                 });
 
-            modelBuilder.Entity("Option.Data.Shared.Poco.OptionData", b =>
+            modelBuilder.Entity("Option.Data.Shared.Poco.DeribitData", b =>
                 {
                     b.Property<long>("Id")
                         .ValueGeneratedOnAdd()
@@ -119,7 +119,7 @@ namespace Option.Data.Database.Migrations.ApplicationDb
 
                     b.HasIndex("CurrencyTypeId", "OptionTypeId", "Strike", "Expiration");
 
-                    b.ToTable("OptionData");
+                    b.ToTable("DeribitData");
                 });
 
             modelBuilder.Entity("Option.Data.Shared.Poco.OptionType", b =>
@@ -152,7 +152,7 @@ namespace Option.Data.Database.Migrations.ApplicationDb
                         });
                 });
 
-            modelBuilder.Entity("Option.Data.Shared.Poco.OptionData", b =>
+            modelBuilder.Entity("Option.Data.Shared.Poco.DeribitData", b =>
                 {
                     b.HasOne("Option.Data.Shared.Poco.CurrencyType", "Currency")
                         .WithMany("Options")

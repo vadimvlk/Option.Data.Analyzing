@@ -3,7 +3,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace Option.Data.Shared.Poco;
 
-public class OptionData
+public class DeribitData
 {
     public long Id { get; set; }
 

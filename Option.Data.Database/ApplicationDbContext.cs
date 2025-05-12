@@ -10,7 +10,7 @@ namespace Option.Data.Database;
 public class ApplicationDbContext (DbContextOptions<ApplicationDbContext> options) : DbContext(options)
 {
     
-    public virtual DbSet<OptionData> OptionData { get; set; }
+    public virtual DbSet<DeribitData> DeribitData { get; set; }
     public virtual DbSet<OptionType> OptionType { get; set; }
     public virtual DbSet<CurrencyType> CurrencyType { get; set; }
 
@@ -51,7 +51,7 @@ public class ApplicationDbContext (DbContextOptions<ApplicationDbContext> option
 
         
         // Configure OptionData entity
-        modelBuilder.Entity<OptionData>(entity =>
+        modelBuilder.Entity<DeribitData>(entity =>
         {
             entity.HasKey(a => a.Id);
 
@@ -87,8 +87,7 @@ public class ApplicationDbContext (DbContextOptions<ApplicationDbContext> option
     
             entity.HasOne(e => e.Type)
                 .WithMany(e => e.Options)
-                .HasForeignKey(e => e.OptionTypeId
-                )
+                .HasForeignKey(e => e.OptionTypeId)
                 .IsRequired()
                 .OnDelete(DeleteBehavior.Restrict);
       
@@ -107,8 +106,5 @@ public class ApplicationDbContext (DbContextOptions<ApplicationDbContext> option
             
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
         });
-
     }
-
-    
 }

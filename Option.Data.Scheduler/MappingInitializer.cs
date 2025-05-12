@@ -9,7 +9,7 @@ public class MappingInitializer : IAsyncInitializer
 {
     public Task InitializeAsync(CancellationToken cancellationToken)
     {
-        TypeAdapterConfig<BookSummaryData, OptionData>
+        TypeAdapterConfig<BookSummaryData, DeribitData>
             .NewConfig()
             .Map(dest => dest.MarkPrice, src => src.MarkPrice ?? 0)
             .Map(dest => dest.UnderlyingPrice, src => src.UnderlyingPrice ?? 0)

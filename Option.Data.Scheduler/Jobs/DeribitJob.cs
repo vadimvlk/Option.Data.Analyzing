@@ -50,6 +50,7 @@ public class DeribitJob : IJob
             {
                 BookSummaryByInstrument? summaryData =
                     await _httpClient.GetFromJsonAsync<BookSummaryByInstrument>(bookSummaryEndpoint);
+                
                 if (summaryData?.Data == null || summaryData.Data.Count == 0)
                 {
                     _logger.LogWarning("No data returned for {currency}", currency);
@@ -57,12 +58,9 @@ public class DeribitJob : IJob
                 }
 
                 // Parse and map data
-                List<OptionData> optionData = await ParseAndMapBookSummaryAsync(summaryData.Data);
-                
-              
+                List<DeribitData> optionData = await ParseAndMapBookSummaryAsync(summaryData.Data);
 
-
-                await _dbContext.OptionData.AddRangeAsync(optionData);
+                await _dbContext.DeribitData.AddRangeAsync(optionData);
                 await _dbContext.SaveChangesAsync();
 
 
@@ -76,46 +74,41 @@ public class DeribitJob : IJob
         }
     }
 
-    private async Task<List<OptionData>> ParseAndMapBookSummaryAsync(List<BookSummaryData> summaryDataList)
+    private async Task<List<DeribitData>> ParseAndMapBookSummaryAsync(List<BookSummaryData> summaryDataList)
     {
-        List<OptionData> optionDataList = new();
+        List<DeribitData> optionDataList = new();
 
         Dictionary<string, OptionType> optionTypes = await _dbContext.OptionType.ToDictionaryAsync(o => o.Name);
         Dictionary<string, CurrencyType> currencyTypes = await _dbContext.CurrencyType.ToDictionaryAsync(c => c.Name);
         
-        
-       
-       
-
-
         foreach (var data in summaryDataList.Where(data => !string.IsNullOrEmpty(data.InstrumentName)))
         {
             // Parse instrument name
             var (parsedCurrency, expiration, strike, optionType) = ParseInstrumentName(data.InstrumentName!);
 
             // Create option data
-            OptionData optionData = data.Adapt<OptionData>();
+            DeribitData deribitData = data.Adapt<DeribitData>();
 
             // Set values from the parsed instrument name
-            optionData.CurrencyTypeId = currencyTypes[parsedCurrency].Id;
+            deribitData.CurrencyTypeId = currencyTypes[parsedCurrency].Id;
 
-            optionData.Strike = strike;
-            optionData.OptionTypeId = optionTypes[optionType].Id;
+            deribitData.Strike = strike;
+            deribitData.OptionTypeId = optionTypes[optionType].Id;
 
-            optionData.Expiration = expiration;
-            optionData.CreatedAt = _dateTimeOffset;
+            deribitData.Expiration = expiration;
+            deribitData.CreatedAt = _dateTimeOffset;
             
             // GET GREEKS new API CALL.
             var queryParams = HttpUtility.ParseQueryString(string.Empty);
-            queryParams["instrument_name"] = optionData.InstrumentName;
+            queryParams["instrument_name"] = deribitData.InstrumentName;
             
             OrderBookByInstrument? orderBook =
                 await _httpClient.GetFromJsonAsync<OrderBookByInstrument>($"get_order_book?{queryParams}");
 
-            optionData.Delta = orderBook?.Data?.Greeks?.Delta ?? 0;
-            optionData.Gamma = orderBook?.Data?.Greeks?.Gamma ?? 0;
+            deribitData.Delta = orderBook?.Data?.Greeks?.Delta ?? 0;
+            deribitData.Gamma = orderBook?.Data?.Greeks?.Gamma ?? 0;
 
-            optionDataList.Add(optionData);
+            optionDataList.Add(deribitData);
         }
 
         return optionDataList;
