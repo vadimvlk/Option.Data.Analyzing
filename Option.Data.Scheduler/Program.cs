@@ -15,16 +15,14 @@ builder.Services.RegisterData(builder.Configuration);
 
 builder.Services.AddQuartz(q =>
 {
-    // Register your job
+    // Register job's
     JobKey jobKey = new JobKey("Deribit");
     q.AddJob<DeribitJob>(opts => opts.WithIdentity(jobKey));
     
     q.AddTrigger(opts => opts
         .ForJob(jobKey)
         .WithIdentity(nameof(DeribitJob))
-        .WithCronSchedule("* * * * * ?"));
-       // .WithCronSchedule("0 0 0/3 * * ?")); // Run every 3 hours starting at 00:00 UTC
-
+        .WithCronSchedule("0 0 0/3 * * ?")); // Run every 3 hours starting at 00:00 UTC
 });
 
 builder.Services.AddQuartzHostedService(q => q.WaitForJobsToComplete = true);
