@@ -71,6 +71,7 @@ public class DeribitJob : IJob
                 _logger.LogError(ex, "Error retrieving data for {currency}", currency);
             }
         }
+        _logger.LogInformation("Finished executed DeribitJob at {Total} minutes", (DateTimeOffset.UtcNow -_dateTimeOffset).Minutes );
     }
 
     private async Task<List<DeribitData>> ParseAndMapBookSummaryAsync(List<BookSummaryData> summaryDataList)

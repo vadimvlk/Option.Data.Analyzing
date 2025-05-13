@@ -63,9 +63,9 @@
     @if (Model.ViewModel.OptionData?.Any() == true)
     {
         <div class="option-data-container">
-            <h2>Options Data for @(Model.ViewModel.SelectedCurrencyId == 1 ? "BTC" : "ETH") - @Model.ViewModel.SelectedExpiration 
+            <h4>Options Data for @(Model.ViewModel.SelectedCurrencyId == 1 ? "BTC" : "ETH") - @Model.ViewModel.SelectedExpiration 
                 Underlying Price: @Model.ViewModel.UnderlyingPrice.ToString("N2")
-                </h2>
+                </h4>
             <table>
                 <thead>
                 <tr>

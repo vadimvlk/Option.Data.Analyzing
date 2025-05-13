@@ -1,5 +1,5 @@
 ﻿@page
-@model Analyze
+@model AnalyzeModel
 @using Option.Data.Shared.Poco
 @using Option.Data.Ui.Services
 @inject IOptionsAnalysisHtmlBuilder HtmlBuilder;
@@ -64,6 +64,9 @@
 
     @if (Model.ViewModel.OptionData.Any())
     {
+        <h4>Options Data for @(Model.ViewModel.SelectedCurrencyId == 1 ? "BTC" : "ETH") - @Model.ViewModel.SelectedExpiration 
+            Underlying Price: @Model.ViewModel.UnderlyingPrice.ToString("N2")
+        </h4>
         <div class="option-analysis-container mt-4">
             @Html.Raw(HtmlBuilder.CalculateCallPutRatioHtml(Model.ViewModel.OptionData))
             @Html.Raw(HtmlBuilder.AnalyzeCentersOfGravityHtml(Model.ViewModel.OptionData, Model.ViewModel.UnderlyingPrice))
