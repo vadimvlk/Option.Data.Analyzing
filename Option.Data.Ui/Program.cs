@@ -1,5 +1,6 @@
 using System.Text;
 using Option.Data.Database;
+using Option.Data.Ui.Services;
 using Serilog;
 using Serilog.Events;
 
@@ -23,7 +24,7 @@ builder.Logging.AddSerilog(Log.Logger, true);
 builder.Services.RegisterData(builder.Configuration);
 
 builder.Services.AddMemoryCache();
-
+builder.Services.AddSingleton<IOptionsAnalysisHtmlBuilder, OptionsAnalysisHtmlBuilder>();
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.

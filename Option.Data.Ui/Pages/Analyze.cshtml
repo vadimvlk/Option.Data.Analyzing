@@ -1,10 +1,11 @@
 ﻿@page
-@using Option.Data.Shared.Poco
 @model Analyze
+@using Option.Data.Shared.Poco
+@using Option.Data.Ui.Services
+@inject IOptionsAnalysisHtmlBuilder HtmlBuilder;
 @{
     ViewData["Title"] = "Deribit Analyze Data";
 }
-
 
 <div class="container">
     <h1>Deribit Options Data</h1>
@@ -61,9 +62,18 @@
         <button type="submit" asp-page-handler="LoadData" class="contrast">Load Data</button>
     </form>
 
-    @if (Model.ViewModel.OptionData?.Any() == true)
+    @if (Model.ViewModel.OptionData.Any())
     {
-       
+        <div class="option-analysis-container mt-4">
+            @Html.Raw(HtmlBuilder.CalculateCallPutRatioHtml(Model.ViewModel.OptionData))
+            @Html.Raw(HtmlBuilder.AnalyzeOpenInterestHtml(Model.ViewModel.OptionData))
+            @Html.Raw(HtmlBuilder.CalculateMaxPainHtml(Model.ViewModel.OptionData, Model.ViewModel.UnderlyingPrice))
+            @Html.Raw(HtmlBuilder.AnalyzeCentersOfGravityHtml(Model.ViewModel.OptionData, Model.ViewModel.UnderlyingPrice))
+            @Html.Raw(HtmlBuilder.CalculateProfitLossHtml(Model.ViewModel.OptionData, Model.ViewModel.UnderlyingPrice))
+            @Html.Raw(HtmlBuilder.AnalyzeGlobalSellerPositionHtml(Model.ViewModel.OptionData, Model.ViewModel.UnderlyingPrice))
+            @Html.Raw(HtmlBuilder.AnalyzePriceMovementPotentialHtml(Model.ViewModel.OptionData, Model.ViewModel.UnderlyingPrice))
+        </div>
+
     }
     else
     {
