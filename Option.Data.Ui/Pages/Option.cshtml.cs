@@ -9,7 +9,7 @@ namespace Option.Data.Ui.Pages;
 public class OptionModel : PageModel
 {
     private readonly ApplicationDbContext _context;
-    
+
     [BindProperty]
     public OptionViewModel ViewModel { get; set; } = new();
 
@@ -20,24 +20,34 @@ public class OptionModel : PageModel
 
     public async Task OnGetAsync()
     {
-        // Загружаем доступные валюты
-        ViewModel.Currencies = await _context.CurrencyType
-            .OrderBy(c => c.Name)
-            .ToListAsync();
+        try
+        {
+            // Загружаем доступные валюты
+            ViewModel.Currencies = await _context.CurrencyType
+                .OrderBy(c => c.Name)
+                .ToListAsync();
 
-        // Загружаем даты экспирации (уникальные значения)
-        ViewModel.Expirations = await _context.DeribitData
-            .Select(o => o.Expiration)
-            .Distinct()
-            .OrderBy(e => e)
-            .ToListAsync();
+            // Загружаем даты экспирации (уникальные значения)
+            ViewModel.Expirations = await _context.DeribitData
+                .Select(o => o.Expiration)
+                .Distinct()
+                .OrderBy(e => e)
+                .ToListAsync();
 
-        // Загружаем доступные даты/время (группируем по CreatedAt)
-        ViewModel.AvailableDates = await _context.DeribitData
-            .Select(o => o.CreatedAt)
-            .Distinct()
-            .OrderBy(d => d)
-            .ToListAsync();
+            // Загружаем доступные даты/время (группируем по CreatedAt)
+            ViewModel.AvailableDates = await _context.DeribitData
+                .Select(o => o.CreatedAt)
+                .Distinct()
+                .OrderBy(d => d)
+                .ToListAsync();
+        }
+        catch (Exception e)
+        {
+            ModelState.AddModelError(string.Empty, $"Error loading data: {e.Message}");
+            ViewModel.Currencies = new List<Option.Data.Shared.Poco.CurrencyType>();
+            ViewModel.Expirations = new List<string>();
+            ViewModel.AvailableDates = new List<DateTimeOffset>();
+        }
     }
 
     public async Task<IActionResult> OnPostLoadDataAsync()
@@ -46,20 +56,20 @@ public class OptionModel : PageModel
         {
             return Page();
         }
-        
+
         bool isValidTime = await _context.DeribitData
             .AnyAsync(d => d.CreatedAt == ViewModel.SelectedDateTime);
-    
+
         if (!isValidTime)
         {
-            ModelState.AddModelError("ViewModel.SelectedDateTime", 
+            ModelState.AddModelError("ViewModel.SelectedDateTime",
                 "Please select a valid date/time from the available options");
             return Page();
         }
 
         // Здесь будет обработка загрузки данных
         // Можно добавить логику для фильтрации данных
-        
+
         return Page();
     }
 }

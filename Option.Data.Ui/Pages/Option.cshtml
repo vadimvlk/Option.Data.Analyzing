@@ -35,35 +35,32 @@
         
         <div>
             <label for="datetime">Date & Time</label>
-            <input type="datetime-local" id="datetime" 
-                   name="ViewModel.SelectedDateTime" 
-                   min="@Model.ViewModel.AvailableDates.Min().ToString("yyyy-MM-ddTHH:mm")"
-                   max="@Model.ViewModel.AvailableDates.Max().ToString("yyyy-MM-ddTHH:mm")"
-                   required />
-            <small>Available range: @Model.ViewModel.AvailableDates.Min().ToString("g") to @Model.ViewModel.AvailableDates.Max().ToString("g")</small>
+            <select id="datetime" name="ViewModel.SelectedDateTime" required>
+                <option value="">Select date & time</option>
+                @{
+                    List<DateTimeOffset> orderedDates = Model.ViewModel.AvailableDates.OrderBy(d => d).ToList();
+                    var lastDate = orderedDates.LastOrDefault();
+                }
+                @foreach (var date in orderedDates)
+                {
+                    if (date == lastDate)
+                    {
+                        <option value="@date.ToString("o")" selected>@date.ToString("g")</option>
+                    }
+                    else
+                    {
+                        <option value="@date.ToString("o")">@date.ToString("g")</option>
+                    }
+                }
+            </select>
+            <small>Available range: @orderedDates.Min().ToString("g") to @orderedDates.Max().ToString("g")</small>
         </div>
-        
+
+
         <button type="submit" asp-page-handler="LoadData" class="contrast">Load Data</button>
     </form>
 </div>
 
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-    const datetimeInput = document.getElementById('datetime');
-    const availableDates = @Json.Serialize(Model.ViewModel.AvailableDates.Select(d => d.ToString("O")));
-    
-    datetimeInput.addEventListener('change', function() {
-        const selectedDate = new Date(this.value).getTime();
-        const isValid = availableDates.some(dateStr => {
-            const date = new Date(dateStr);
-            return Math.abs(date.getTime() - selectedDate) < 60000; // 1 minute tolerance
-        });
-        
-        if (!isValid) {
-            this.setCustomValidity('Please select a valid date/time from the available options');
-        } else {
-            this.setCustomValidity('');
-        }
-    });
-});
+
 </script>
