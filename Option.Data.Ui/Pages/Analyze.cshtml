@@ -66,11 +66,11 @@
     {
         <div class="option-analysis-container mt-4">
             @Html.Raw(HtmlBuilder.CalculateCallPutRatioHtml(Model.ViewModel.OptionData))
+            @Html.Raw(HtmlBuilder.AnalyzeCentersOfGravityHtml(Model.ViewModel.OptionData, Model.ViewModel.UnderlyingPrice))
+            @Html.Raw(HtmlBuilder.AnalyzeGlobalSellerPositionHtml(Model.ViewModel.OptionData, Model.ViewModel.UnderlyingPrice))
             @Html.Raw(HtmlBuilder.AnalyzeOpenInterestHtml(Model.ViewModel.OptionData))
             @Html.Raw(HtmlBuilder.CalculateMaxPainHtml(Model.ViewModel.OptionData, Model.ViewModel.UnderlyingPrice))
-            @Html.Raw(HtmlBuilder.AnalyzeCentersOfGravityHtml(Model.ViewModel.OptionData, Model.ViewModel.UnderlyingPrice))
             @Html.Raw(HtmlBuilder.CalculateProfitLossHtml(Model.ViewModel.OptionData, Model.ViewModel.UnderlyingPrice))
-            @Html.Raw(HtmlBuilder.AnalyzeGlobalSellerPositionHtml(Model.ViewModel.OptionData, Model.ViewModel.UnderlyingPrice))
             @Html.Raw(HtmlBuilder.AnalyzePriceMovementPotentialHtml(Model.ViewModel.OptionData, Model.ViewModel.UnderlyingPrice))
         </div>
 
