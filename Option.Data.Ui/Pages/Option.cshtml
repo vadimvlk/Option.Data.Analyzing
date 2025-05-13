@@ -1,0 +1,69 @@
+﻿@page
+@using Option.Data.Shared.Poco
+@model OptionModel
+@{
+    ViewData["Title"] = "Deribit Options Data";
+}
+
+<div class="container">
+    <h1>Deribit Options Data</h1>
+    
+    <form method="post">
+        <div class="grid">
+            <div>
+                <label for="currency">Currency</label>
+                <select id="currency" name="ViewModel.SelectedCurrencyId" required>
+                    <option value="">Select currency</option>
+                    @foreach (CurrencyType currency in Model.ViewModel.Currencies)
+                    {
+                        <option value="@currency.Id">@currency.Name</option>
+                    }
+                </select>
+            </div>
+            
+            <div>
+                <label for="expiration">Expiration</label>
+                <select id="expiration" name="ViewModel.SelectedExpiration" required>
+                    <option value="">Select expiration</option>
+                    @foreach (string exp in Model.ViewModel.Expirations)
+                    {
+                        <option value="@exp">@exp</option>
+                    }
+                </select>
+            </div>
+        </div>
+        
+        <div>
+            <label for="datetime">Date & Time</label>
+            <input type="datetime-local" id="datetime" 
+                   name="ViewModel.SelectedDateTime" 
+                   min="@Model.ViewModel.AvailableDates.Min().ToString("yyyy-MM-ddTHH:mm")"
+                   max="@Model.ViewModel.AvailableDates.Max().ToString("yyyy-MM-ddTHH:mm")"
+                   required />
+            <small>Available range: @Model.ViewModel.AvailableDates.Min().ToString("g") to @Model.ViewModel.AvailableDates.Max().ToString("g")</small>
+        </div>
+        
+        <button type="submit" asp-page-handler="LoadData" class="contrast">Load Data</button>
+    </form>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const datetimeInput = document.getElementById('datetime');
+    const availableDates = @Json.Serialize(Model.ViewModel.AvailableDates.Select(d => d.ToString("O")));
+    
+    datetimeInput.addEventListener('change', function() {
+        const selectedDate = new Date(this.value).getTime();
+        const isValid = availableDates.some(dateStr => {
+            const date = new Date(dateStr);
+            return Math.abs(date.getTime() - selectedDate) < 60000; // 1 minute tolerance
+        });
+        
+        if (!isValid) {
+            this.setCustomValidity('Please select a valid date/time from the available options');
+        } else {
+            this.setCustomValidity('');
+        }
+    });
+});
+</script>
