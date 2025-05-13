@@ -620,728 +620,768 @@ public class OptionsAnalysisHtmlBuilder : IOptionsAnalysisHtmlBuilder
         return htmlBuilder.ToString();
     }
 
-   public string AnalyzeGlobalSellerPositionHtml(List<OptionData> data, double currentPrice)
-{
-    var htmlBuilder = new StringBuilder();
-    
-    htmlBuilder.AppendLine("<article class='card'>");
-    htmlBuilder.AppendLine("<header class='card-header bg-light'>");
-    htmlBuilder.AppendLine("<h4>Анализ позиции глобального продавца опционов</h4>");
-    htmlBuilder.AppendLine("</header>");
-    
-    htmlBuilder.AppendLine("<div class='card-body'>");
-    
-    // 1. Подсчитываем общую полученную премию продавцом
-    double totalCallPremium = 0;
-    double totalPutPremium = 0;
-
-    foreach (OptionData option in data)
+    public string AnalyzeGlobalSellerPositionHtml(List<OptionData> data, double currentPrice)
     {
-        totalCallPremium += option.CallPrice * option.CallOi;
-        totalPutPremium += option.PutPrice * option.PutOi;
-    }
+        var htmlBuilder = new StringBuilder();
 
-    double totalPremium = totalCallPremium + totalPutPremium;
-    
-    // Overview section at the top
-    htmlBuilder.AppendLine("<div class='card mb-3'>");
-    htmlBuilder.AppendLine("<div class='card-header bg-light'>");
-    htmlBuilder.AppendLine("<h5 class='mb-0'>Обзор позиции продавца</h5>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("<div class='card-body'>");
-    
-    htmlBuilder.AppendLine("<div class='row'>");
-    
-    // Current price
-    htmlBuilder.AppendLine("<div class='col-md-3 col-sm-6 mb-3'>");
-    htmlBuilder.AppendLine("<div class='card h-100'>");
-    htmlBuilder.AppendLine("<div class='card-body text-center'>");
-    htmlBuilder.AppendLine("<h6 class='text-muted'>Текущая цена</h6>");
-    htmlBuilder.AppendLine($"<h4 class='mb-0'>{currentPrice:F2}</h4>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    
-    // Total premium
-    htmlBuilder.AppendLine("<div class='col-md-3 col-sm-6 mb-3'>");
-    htmlBuilder.AppendLine("<div class='card h-100'>");
-    htmlBuilder.AppendLine("<div class='card-body text-center'>");
-    htmlBuilder.AppendLine("<h6 class='text-muted'>Общая премия</h6>");
-    htmlBuilder.AppendLine($"<h4 class='mb-0'>{totalPremium:N0}</h4>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    
-    // Call premium
-    htmlBuilder.AppendLine("<div class='col-md-3 col-sm-6 mb-3'>");
-    htmlBuilder.AppendLine("<div class='card h-100'>");
-    htmlBuilder.AppendLine("<div class='card-body text-center'>");
-    htmlBuilder.AppendLine("<h6 class='text-muted'>Call премия</h6>");
-    htmlBuilder.AppendLine($"<h4 class='mb-0'>{totalCallPremium:N0}</h4>");
-    htmlBuilder.AppendLine($"<small class='text-muted'>({totalCallPremium / totalPremium * 100:F1}%)</small>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    
-    // Put premium
-    htmlBuilder.AppendLine("<div class='col-md-3 col-sm-6 mb-3'>");
-    htmlBuilder.AppendLine("<div class='card h-100'>");
-    htmlBuilder.AppendLine("<div class='card-body text-center'>");
-    htmlBuilder.AppendLine("<h6 class='text-muted'>Put премия</h6>");
-    htmlBuilder.AppendLine($"<h4 class='mb-0'>{totalPutPremium:N0}</h4>");
-    htmlBuilder.AppendLine($"<small class='text-muted'>({totalPutPremium / totalPremium * 100:F1}%)</small>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    
-    htmlBuilder.AppendLine("</div>"); // Close row
-    
-    htmlBuilder.AppendLine("</div>"); // Close card-body
-    htmlBuilder.AppendLine("</div>"); // Close card
-    
-    // 2. Определяем диапазон цен для анализа
-    double minStrike = data.Min(d => d.Strike);
-    double maxStrike = data.Max(d => d.Strike);
+        htmlBuilder.AppendLine("<article class='card'>");
+        htmlBuilder.AppendLine("<header class='card-header bg-light'>");
+        htmlBuilder.AppendLine("<h4>Анализ позиции глобального продавца опционов</h4>");
+        htmlBuilder.AppendLine("</header>");
 
-    // Чтобы не упустить безубыточные точки вне диапазона страйков, расширим диапазон на 30%
-    double rangeExtensionPercent = 0.3;
-    double minPrice = minStrike * (1 - rangeExtensionPercent);
-    double maxPrice = maxStrike * (1 + rangeExtensionPercent);
+        htmlBuilder.AppendLine("<div class='card-body'>");
 
-    // Шаг для анализа (примерно 0.1% от текущей цены)
-    double step = currentPrice * 0.001;
-
-    // 3. Анализируем профит/убыток продавца на разных уровнях цены
-    List<(double Price, double TotalPnL, double CallPnL, double PutPnL)> pnlData = new();
-
-    for (double price = minPrice; price <= maxPrice; price += step)
-    {
-        double callPnL = CalculateSellerCallPnL(data, price);
-        double putPnL = CalculateSellerPutPnL(data, price);
-        double totalPnL = callPnL + putPnL;
-
-        pnlData.Add((price, totalPnL, callPnL, putPnL));
-    }
-    
-    // 4. Анализируем убытки на текущей цене
-    (double Price, double TotalPnL, double CallPnL, double PutPnL) currentPnL =
-        pnlData.FirstOrDefault(p => Math.Abs(p.Price - currentPrice) < step / 2);
-    if (currentPnL == default)
-    {
-        // Если точно не нашли, найдем ближайшую точку
-        currentPnL = pnlData.OrderBy(p => Math.Abs(p.Price - currentPrice)).First();
-    }
-    
-    // Current position card
-    htmlBuilder.AppendLine("<div class='card mb-3'>");
-    htmlBuilder.AppendLine("<div class='card-header bg-light'>");
-    htmlBuilder.AppendLine("<h5 class='mb-0'>Позиция продавца при текущей цене</h5>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("<div class='card-body'>");
-    
-    htmlBuilder.AppendLine("<div class='row'>");
-    
-    // Total PnL at current price
-    string pnlClass = currentPnL.TotalPnL >= 0 ? "text-success" : "text-danger";
-    string pnlIcon = currentPnL.TotalPnL >= 0 ? "bi-graph-up-arrow" : "bi-graph-down-arrow";
-    
-    htmlBuilder.AppendLine("<div class='col-md-4 mb-3'>");
-    htmlBuilder.AppendLine("<div class='card h-100'>");
-    htmlBuilder.AppendLine("<div class='card-body text-center'>");
-    htmlBuilder.AppendLine("<h6 class='text-muted'>Общий PnL</h6>");
-    htmlBuilder.AppendLine($"<h4 class='mb-0 {pnlClass}'>");
-    htmlBuilder.AppendLine($"<i class='bi {pnlIcon} me-2'></i>{currentPnL.TotalPnL:N0}</h4>");
-    
-    if (currentPnL.TotalPnL < 0)
-    {
-        htmlBuilder.AppendLine($"<small class='text-muted'>({Math.Abs(currentPnL.TotalPnL) / totalPremium * 100:F1}% от премии)</small>");
-    }
-    
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    
-    // Call PnL at current price
-    string callPnlClass = currentPnL.CallPnL >= 0 ? "text-success" : "text-danger";
-    
-    htmlBuilder.AppendLine("<div class='col-md-4 mb-3'>");
-    htmlBuilder.AppendLine("<div class='card h-100'>");
-    htmlBuilder.AppendLine("<div class='card-body text-center'>");
-    htmlBuilder.AppendLine("<h6 class='text-muted'>PnL от Call</h6>");
-    htmlBuilder.AppendLine($"<h4 class='mb-0 {callPnlClass}'>{currentPnL.CallPnL:N0}</h4>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    
-    // Put PnL at current price
-    string putPnlClass = currentPnL.PutPnL >= 0 ? "text-success" : "text-danger";
-    
-    htmlBuilder.AppendLine("<div class='col-md-4 mb-3'>");
-    htmlBuilder.AppendLine("<div class='card h-100'>");
-    htmlBuilder.AppendLine("<div class='card-body text-center'>");
-    htmlBuilder.AppendLine("<h6 class='text-muted'>PnL от Put</h6>");
-    htmlBuilder.AppendLine($"<h4 class='mb-0 {putPnlClass}'>{currentPnL.PutPnL:N0}</h4>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    
-    htmlBuilder.AppendLine("</div>"); // Close row
-    
-    // Status alert
-    string alertClass = currentPnL.TotalPnL >= 0 ? "alert-success" : "alert-secondary";
-    
-    htmlBuilder.AppendLine($"<div class='alert {alertClass} mt-3'>");
-    if (currentPnL.TotalPnL >= 0)
-    {
-        htmlBuilder.AppendLine("<i class='bi bi-check-circle me-2'></i><strong>Продавец в прибыли</strong> на текущем уровне цены");
-    }
-    else
-    {
-        htmlBuilder.AppendLine("<i class='bi bi-exclamation-triangle me-2'></i><strong>Продавец в убытке</strong> на текущем уровне цены");
-        htmlBuilder.AppendLine($"<p class='mb-0 mt-2'>Размер убытка: <strong>{Math.Abs(currentPnL.TotalPnL):N0}</strong> " +
-                              $"({Math.Abs(currentPnL.TotalPnL) / totalPremium * 100:F1}% от полученной премии)</p>");
-    }
-    htmlBuilder.AppendLine("</div>");
-    
-    htmlBuilder.AppendLine("</div>"); // Close card-body
-    htmlBuilder.AppendLine("</div>"); // Close card
-    
-    // 5. Находим безубыточные зоны (где PnL >= 0)
-    List<(double LowerBound, double UpperBound)> profitZones = new();
-
-    for (int i = 0; i < pnlData.Count - 1; i++)
-    {
-        if (pnlData[i].TotalPnL >= 0 && (i == 0 || pnlData[i - 1].TotalPnL < 0))
-        {
-            // Начало зоны прибыли
-            double lowerBound = pnlData[i].Price;
-
-            // Ищем конец зоны прибыли
-            double upperBound = maxPrice;
-            for (int j = i + 1; j < pnlData.Count; j++)
-            {
-                if (pnlData[j].TotalPnL < 0)
-                {
-                    upperBound = pnlData[j - 1].Price;
-                    break;
-                }
-            }
-
-            profitZones.Add((lowerBound, upperBound));
-
-            // Переходим к поиску следующей зоны прибыли
-            while (i < pnlData.Count && pnlData[i].TotalPnL >= 0)
-            {
-                i++;
-            }
-        }
-    }
-    
-    // 7. Находим нижнюю и верхнюю точки безубытка (ближайшие к текущей цене)
-    // Сначала находим все точки безубытка (переходы через 0)
-    List<double> breakEvenPoints = new();
-
-    for (int i = 0; i < pnlData.Count - 1; i++)
-    {
-        // Если PnL меняет знак между соседними точками - это точка безубытка
-        if ((pnlData[i].TotalPnL >= 0 && pnlData[i + 1].TotalPnL < 0) ||
-            (pnlData[i].TotalPnL < 0 && pnlData[i + 1].TotalPnL >= 0))
-        {
-            // Линейная интерполяция для нахождения точного значения
-            double pnl1 = pnlData[i].TotalPnL;
-            double pnl2 = pnlData[i + 1].TotalPnL;
-            double price1 = pnlData[i].Price;
-            double price2 = pnlData[i + 1].Price;
-
-            // Формула линейной интерполяции: price = price1 + (0 - pnl1) * (price2 - price1) / (pnl2 - pnl1)
-            double breakEvenPrice = price1 + (0 - pnl1) * (price2 - price1) / (pnl2 - pnl1);
-            breakEvenPoints.Add(breakEvenPrice);
-        }
-    }
-
-    // Сортируем точки безубытка
-    breakEvenPoints.Sort();
-    
-    // 6. Находим точки максимальной прибыли и максимального убытка
-    (double Price, double TotalPnL, double CallPnL, double PutPnL) maxProfitPoint =
-        pnlData.OrderByDescending(p => p.TotalPnL).First();
-    (double Price, double TotalPnL, double CallPnL, double PutPnL) maxLossPoint =
-        pnlData.OrderBy(p => p.TotalPnL).First();
-    
-    // Key Price Levels card
-    htmlBuilder.AppendLine("<div class='card mb-3'>");
-    htmlBuilder.AppendLine("<div class='card-header bg-light'>");
-    htmlBuilder.AppendLine("<h5 class='mb-0'>Ключевые ценовые уровни</h5>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("<div class='card-body'>");
-    
-    htmlBuilder.AppendLine("<div class='row'>");
-    
-    // Maximum Profit Point
-    htmlBuilder.AppendLine("<div class='col-md-6 mb-3'>");
-    htmlBuilder.AppendLine("<div class='card h-100'>");
-    htmlBuilder.AppendLine("<div class='card-header'>");
-    htmlBuilder.AppendLine("<h6 class='mb-0'><i class='bi bi-graph-up me-2'></i>Точка максимальной прибыли</h6>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("<div class='card-body'>");
-    htmlBuilder.AppendLine("<div class='d-flex justify-content-between'>");
-    htmlBuilder.AppendLine("<span>Уровень цены:</span>");
-    htmlBuilder.AppendLine($"<strong>{maxProfitPoint.Price:F2}</strong>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("<div class='d-flex justify-content-between'>");
-    htmlBuilder.AppendLine("<span>Максимальная прибыль:</span>");
-    htmlBuilder.AppendLine($"<strong class='text-success'>{maxProfitPoint.TotalPnL:N0}</strong>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    
-    // Maximum Loss Point
-    htmlBuilder.AppendLine("<div class='col-md-6 mb-3'>");
-    htmlBuilder.AppendLine("<div class='card h-100'>");
-    htmlBuilder.AppendLine("<div class='card-header'>");
-    htmlBuilder.AppendLine("<h6 class='mb-0'><i class='bi bi-graph-down me-2'></i>Точка максимального убытка</h6>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("<div class='card-body'>");
-    htmlBuilder.AppendLine("<div class='d-flex justify-content-between'>");
-    htmlBuilder.AppendLine("<span>Уровень цены:</span>");
-    htmlBuilder.AppendLine($"<strong>{maxLossPoint.Price:F2}</strong>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("<div class='d-flex justify-content-between'>");
-    htmlBuilder.AppendLine("<span>Максимальный убыток:</span>");
-    htmlBuilder.AppendLine($"<strong class='text-danger'>{maxLossPoint.TotalPnL:N0}</strong>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    
-    htmlBuilder.AppendLine("</div>"); // Close row
-    
-    // Break-even points section
-    htmlBuilder.AppendLine("<h5 class='mt-4 mb-3'>Точки безубытка</h5>");
-    
-    if (breakEvenPoints.Count == 0)
-    {
-        htmlBuilder.AppendLine("<div class='alert alert-secondary'>");
-        htmlBuilder.AppendLine("<i class='bi bi-info-circle me-2'></i>Точек безубытка не найдено в анализируемом диапазоне цен.");
-        htmlBuilder.AppendLine("</div>");
-    }
-    else
-    {
-        // Table of break-even points
-        htmlBuilder.AppendLine("<div class='table-responsive'>");
-        htmlBuilder.AppendLine("<table class='table table-bordered'>");
-        htmlBuilder.AppendLine("<thead class='table-light'>");
-        htmlBuilder.AppendLine("<tr>");
-        htmlBuilder.AppendLine("<th>#</th>");
-        htmlBuilder.AppendLine("<th>Уровень цены</th>");
-        htmlBuilder.AppendLine("<th>Отклонение от текущей цены</th>");
-        htmlBuilder.AppendLine("<th>Процентное отклонение</th>");
-        htmlBuilder.AppendLine("</tr>");
-        htmlBuilder.AppendLine("</thead>");
-        htmlBuilder.AppendLine("<tbody>");
-        
-        for (int i = 0; i < breakEvenPoints.Count; i++)
-        {
-            double point = breakEvenPoints[i];
-            double deviation = point - currentPrice;
-            double percentDeviation = deviation / currentPrice * 100;
-            string deviationClass = deviation >= 0 ? "text-success" : "text-danger";
-            
-            htmlBuilder.AppendLine("<tr>");
-            htmlBuilder.AppendLine($"<td>{i + 1}</td>");
-            htmlBuilder.AppendLine($"<td><strong>{point:F2}</strong></td>");
-            htmlBuilder.AppendLine($"<td class='{deviationClass}'>{deviation:F2}</td>");
-            htmlBuilder.AppendLine($"<td class='{deviationClass}'>{percentDeviation:F2}%</td>");
-            htmlBuilder.AppendLine("</tr>");
-        }
-        
-        htmlBuilder.AppendLine("</tbody>");
-        htmlBuilder.AppendLine("</table>");
-        htmlBuilder.AppendLine("</div>");
-        
-        // Находим ближайшие точки безубытка снизу и сверху от текущей цены
-        double? lowerBreakEven = breakEvenPoints.Where(p => p < currentPrice).DefaultIfEmpty(double.NaN).Max();
-        double? upperBreakEven = breakEvenPoints.Where(p => p > currentPrice).DefaultIfEmpty(double.NaN).Min();
-        
-        htmlBuilder.AppendLine("<div class='row mt-4'>");
-        
-        // Ближайшая нижняя точка безубытка
-        htmlBuilder.AppendLine("<div class='col-md-6 mb-3'>");
-        if (!double.IsNaN((double)lowerBreakEven))
-        {
-            double lowerDeviation = (double)lowerBreakEven - currentPrice;
-            double lowerPercentDeviation = lowerDeviation / currentPrice * 100;
-            
-            htmlBuilder.AppendLine("<div class='card h-100'>");
-            htmlBuilder.AppendLine("<div class='card-header'>");
-            htmlBuilder.AppendLine("<h6 class='mb-0'><i class='bi bi-arrow-down me-2'></i>Нижняя точка безубытка</h6>");
-            htmlBuilder.AppendLine("</div>");
-            htmlBuilder.AppendLine("<div class='card-body'>");
-            htmlBuilder.AppendLine("<div class='d-flex justify-content-between'>");
-            htmlBuilder.AppendLine("<span>Уровень цены:</span>");
-            htmlBuilder.AppendLine($"<strong>{lowerBreakEven:F2}</strong>");
-            htmlBuilder.AppendLine("</div>");
-            htmlBuilder.AppendLine("<div class='d-flex justify-content-between'>");
-            htmlBuilder.AppendLine("<span>Отклонение:</span>");
-            htmlBuilder.AppendLine($"<strong class='text-danger'>{lowerDeviation:F2} ({lowerPercentDeviation:F2}%)</strong>");
-            htmlBuilder.AppendLine("</div>");
-            htmlBuilder.AppendLine("</div>");
-            htmlBuilder.AppendLine("</div>");
-        }
-        else
-        {
-            htmlBuilder.AppendLine("<div class='alert alert-secondary h-100'>");
-            htmlBuilder.AppendLine("<i class='bi bi-info-circle me-2'></i>Нижняя точка безубытка не найдена в анализируемом диапазоне.");
-            htmlBuilder.AppendLine("</div>");
-        }
-        htmlBuilder.AppendLine("</div>");
-        
-        // Ближайшая верхняя точка безубытка
-        htmlBuilder.AppendLine("<div class='col-md-6 mb-3'>");
-        if (!double.IsNaN((double)upperBreakEven))
-        {
-            double upperDeviation = (double)upperBreakEven - currentPrice;
-            double upperPercentDeviation = upperDeviation / currentPrice * 100;
-            
-            htmlBuilder.AppendLine("<div class='card h-100'>");
-            htmlBuilder.AppendLine("<div class='card-header'>");
-            htmlBuilder.AppendLine("<h6 class='mb-0'><i class='bi bi-arrow-up me-2'></i>Верхняя точка безубытка</h6>");
-            htmlBuilder.AppendLine("</div>");
-            htmlBuilder.AppendLine("<div class='card-body'>");
-            htmlBuilder.AppendLine("<div class='d-flex justify-content-between'>");
-            htmlBuilder.AppendLine("<span>Уровень цены:</span>");
-            htmlBuilder.AppendLine($"<strong>{upperBreakEven:F2}</strong>");
-            htmlBuilder.AppendLine("</div>");
-            htmlBuilder.AppendLine("<div class='d-flex justify-content-between'>");
-            htmlBuilder.AppendLine("<span>Отклонение:</span>");
-            htmlBuilder.AppendLine($"<strong class='text-success'>{upperDeviation:F2} ({upperPercentDeviation:F2}%)</strong>");
-            htmlBuilder.AppendLine("</div>");
-            htmlBuilder.AppendLine("</div>");
-            htmlBuilder.AppendLine("</div>");
-        }
-        else
-        {
-            htmlBuilder.AppendLine("<div class='alert alert-secondary h-100'>");
-            htmlBuilder.AppendLine("<i class='bi bi-info-circle me-2'></i>Верхняя точка безубытка не найдена в анализируемом диапазоне.");
-            htmlBuilder.AppendLine("</div>");
-        }
-        htmlBuilder.AppendLine("</div>");
-        
-        htmlBuilder.AppendLine("</div>"); // Close row
-        
-        // Potential price range
-        if (!double.IsNaN((double)lowerBreakEven) && !double.IsNaN((double)upperBreakEven))
-        {
-            double rangeWidth = (double)upperBreakEven - (double)lowerBreakEven;
-            double rangePercent = rangeWidth / currentPrice * 100;
-            
-            htmlBuilder.AppendLine("<div class='alert alert-secondary mt-3 mb-3'>");
-            htmlBuilder.AppendLine("<h5><i class='bi bi-arrows-expand me-2'></i>Вероятный диапазон движения цены</h5>");
-            htmlBuilder.AppendLine("<div class='d-flex justify-content-between'>");
-            htmlBuilder.AppendLine($"<span>Диапазон: <strong>{lowerBreakEven:F2} - {upperBreakEven:F2}</strong></span>");
-            htmlBuilder.AppendLine($"<span>Ширина: <strong>{rangeWidth:F2} ({rangePercent:F2}%)</strong></span>");
-            htmlBuilder.AppendLine("</div>");
-            
-            // Находим преобладающую силу: растущую или падающую
-            double distanceToLower = currentPrice - (double)lowerBreakEven;
-            double distanceToUpper = (double)upperBreakEven - currentPrice;
-
-            if (distanceToLower * 1.2 < distanceToUpper)
-            {
-                htmlBuilder.AppendLine("<div class='alert alert-secondary mt-2 mb-0'>");
-                htmlBuilder.AppendLine("<i class='bi bi-exclamation-triangle me-2'></i><strong>Внимание:</strong> Текущая цена значительно ближе к нижней точке безубытка.");
-                htmlBuilder.AppendLine("<p class='mb-0'>Это указывает на повышенный риск пробоя вниз и возможное значительное падение цены.</p>");
-                htmlBuilder.AppendLine("</div>");
-            }
-            else if (distanceToUpper * 1.2 < distanceToLower)
-            {
-                htmlBuilder.AppendLine("<div class='alert alert-secondary mt-2 mb-0'>");
-                htmlBuilder.AppendLine("<i class='bi bi-exclamation-triangle me-2'></i><strong>Внимание:</strong> Текущая цена значительно ближе к верхней точке безубытка.");
-                htmlBuilder.AppendLine("<p class='mb-0'>Это указывает на повышенный риск пробоя вверх и возможное значительное повышение цены.</p>");
-                htmlBuilder.AppendLine("</div>");
-            }
-            else
-            {
-                htmlBuilder.AppendLine("<div class='alert alert-secondary mt-2 mb-0'>");
-                htmlBuilder.AppendLine("<i class='bi bi-info-circle me-2'></i>Текущая цена находится в относительно сбалансированном положении между точками безубытка.");
-                htmlBuilder.AppendLine("</div>");
-            }
-            
-            htmlBuilder.AppendLine("</div>");
-        }
-    }
-    
-    // Profit Zones section
-    htmlBuilder.AppendLine("<h5 class='mt-4 mb-3'>Безубыточные зоны для продавца</h5>");
-    
-    if (profitZones.Count == 0)
-    {
-        htmlBuilder.AppendLine("<div class='alert alert-secondary'>");
-        htmlBuilder.AppendLine("<i class='bi bi-exclamation-triangle me-2'></i>Продавец в убытке на всём рассматриваемом диапазоне цен.");
-        htmlBuilder.AppendLine("</div>");
-    }
-    else
-    {
-        // Table of profit zones
-        htmlBuilder.AppendLine("<div class='table-responsive'>");
-        htmlBuilder.AppendLine("<table class='table table-bordered'>");
-        htmlBuilder.AppendLine("<thead class='table-light'>");
-        htmlBuilder.AppendLine("<tr>");
-        htmlBuilder.AppendLine("<th>#</th>");
-        htmlBuilder.AppendLine("<th>Нижняя граница</th>");
-        htmlBuilder.AppendLine("<th>Верхняя граница</th>");
-        htmlBuilder.AppendLine("<th>Ширина диапазона</th>");
-        htmlBuilder.AppendLine("<th>% от текущей цены</th>");
-        htmlBuilder.AppendLine("</tr>");
-        htmlBuilder.AppendLine("</thead>");
-        htmlBuilder.AppendLine("<tbody>");
-        
-        for (int i = 0; i < profitZones.Count; i++)
-        {
-            var zone = profitZones[i];
-            double zoneWidth = zone.UpperBound - zone.LowerBound;
-            double zonePercentWidth = zoneWidth / currentPrice * 100;
-            
-            string rowClass = "";
-            if (currentPrice >= zone.LowerBound && currentPrice <= zone.UpperBound)
-            {
-                rowClass = "table-light";
-            }
-            
-            htmlBuilder.AppendLine($"<tr class='{rowClass}'>");
-            htmlBuilder.AppendLine($"<td>{i + 1}</td>");
-            htmlBuilder.AppendLine($"<td>{zone.LowerBound:F2}</td>");
-            htmlBuilder.AppendLine($"<td>{zone.UpperBound:F2}</td>");
-            htmlBuilder.AppendLine($"<td>{zoneWidth:F2}</td>");
-            htmlBuilder.AppendLine($"<td>{zonePercentWidth:F2}%</td>");
-            htmlBuilder.AppendLine("</tr>");
-        }
-        
-        htmlBuilder.AppendLine("</tbody>");
-        htmlBuilder.AppendLine("</table>");
-        htmlBuilder.AppendLine("</div>");
-        
-        // If seller is currently at a loss, show closest profit zone
-        if (currentPnL.TotalPnL < 0)
-        {
-            // Находим ближайшую зону безубытка
-            var closest = profitZones
-                .Select(zone => new
-                {
-                    Zone = zone,
-                    Distance = Math.Min(
-                        Math.Abs(zone.LowerBound - currentPrice),
-                        Math.Abs(zone.UpperBound - currentPrice)
-                    )
-                })
-                .OrderBy(x => x.Distance)
-                .First();
-                
-            htmlBuilder.AppendLine("<div class='alert alert-secondary mt-3'>");
-            htmlBuilder.AppendLine("<i class='bi bi-info-circle me-2'></i>Продавец опционов сейчас в убытке, что создает давление на движение цены к ближайшей зоне безубытка.");
-            
-            if (closest.Zone.LowerBound <= currentPrice && closest.Zone.UpperBound >= currentPrice)
-            {
-                htmlBuilder.AppendLine("<p class='mb-0'>Текущая цена находится внутри зоны безубытка.</p>");
-            }
-            else if (Math.Abs(closest.Zone.LowerBound - currentPrice) <
-                     Math.Abs(closest.Zone.UpperBound - currentPrice))
-            {
-                htmlBuilder.AppendLine($"<p class='mb-0'>Ближайший уровень безубытка находится снизу на уровне <strong>{closest.Zone.LowerBound:F2}</strong>. Возможно давление на цену в сторону снижения.</p>");
-            }
-            else
-            {
-                htmlBuilder.AppendLine($"<p class='mb-0'>Ближайший уровень безубытка находится сверху на уровне <strong>{closest.Zone.UpperBound:F2}</strong>. Возможно давление на цену в сторону повышения.</p>");
-            }
-            
-            htmlBuilder.AppendLine("</div>");
-        }
-    }
-    
-    htmlBuilder.AppendLine("</div>"); // Close card-body
-    htmlBuilder.AppendLine("</div>"); // Close card
-    
-    // Delta/Gamma Exposure Analysis
-    if (!data.All(x => x.CallDelta == 0 || x.PutDelta == 0))
-    {
-        double totalCallDelta = 0.0, totalPutDelta = 0.0;
-        double totalCallGamma = 0.0, totalPutGamma = 0.0;
+        // 1. Подсчитываем общую полученную премию продавцом
+        double totalCallPremium = 0;
+        double totalPutPremium = 0;
 
         foreach (OptionData option in data)
         {
-            totalCallDelta += option.CallDelta * option.CallOi;
-            totalPutDelta += option.PutDelta * option.PutOi;
-            totalCallGamma += option.CallGamma * option.CallOi;
-            totalPutGamma += option.PutGamma * option.PutOi;
+            totalCallPremium += option.CallPrice * option.CallOi;
+            totalPutPremium += option.PutPrice * option.PutOi;
         }
 
-        double totalDeltaSellers = -(totalCallDelta + totalPutDelta);
-        double totalGammaSellers = -(totalCallGamma + totalPutGamma);
-        
+        double totalPremium = totalCallPremium + totalPutPremium;
+
+        // Overview section at the top
         htmlBuilder.AppendLine("<div class='card mb-3'>");
         htmlBuilder.AppendLine("<div class='card-header bg-light'>");
-        htmlBuilder.AppendLine("<h5 class='mb-0'>Delta/Gamma Exposure Анализ</h5>");
+        htmlBuilder.AppendLine("<h5 class='mb-0'>Обзор позиции продавца</h5>");
         htmlBuilder.AppendLine("</div>");
         htmlBuilder.AppendLine("<div class='card-body'>");
-        
-        htmlBuilder.AppendLine("<div class='row'>");
-        
-        // Delta Exposure
-        htmlBuilder.AppendLine("<div class='col-md-6'>");
-        htmlBuilder.AppendLine("<div class='card h-100'>");
-        htmlBuilder.AppendLine("<div class='card-header'>Delta Exposure</div>");
-        htmlBuilder.AppendLine("<div class='card-body'>");
-        
-        string deltaClass = totalDeltaSellers >= 0 ? "text-success" : "text-danger";
-        string deltaIcon = totalDeltaSellers >= 0 ? "bi-arrow-up-circle" : "bi-arrow-down-circle";
-        
-        htmlBuilder.AppendLine("<h4 class='text-center mb-4'>");
-        htmlBuilder.AppendLine($"<i class='bi {deltaIcon} me-2'></i>");
-        htmlBuilder.AppendLine($"<span class='{deltaClass}'>{totalDeltaSellers:N2}</span>");
-        htmlBuilder.AppendLine("</h4>");
-        
-        htmlBuilder.AppendLine("<div class='d-flex justify-content-between'>");
-        htmlBuilder.AppendLine("<span>Call Delta:</span>");
-        htmlBuilder.AppendLine($"<strong>{totalCallDelta:N2}</strong>");
-        htmlBuilder.AppendLine("</div>");
-        
-        htmlBuilder.AppendLine("<div class='d-flex justify-content-between'>");
-        htmlBuilder.AppendLine("<span>Put Delta:</span>");
-        htmlBuilder.AppendLine($"<strong>{totalPutDelta:N2}</strong>");
-        htmlBuilder.AppendLine("</div>");
-        
-        // Interpretation for Delta
-        htmlBuilder.AppendLine("<div class='alert alert-light mt-3 mb-0'>");
-        if (totalDeltaSellers > 0)
-        {
-            htmlBuilder.AppendLine("<small>Положительная дельта означает, что продавцы опционов в целом выигрывают от роста цены актива.</small>");
-        }
-        else if (totalDeltaSellers < 0)
-        {
-            htmlBuilder.AppendLine("<small>Отрицательная дельта означает, что продавцы опционов в целом выигрывают от падения цены актива.</small>");
-        }
-        else
-        {
-            htmlBuilder.AppendLine("<small>Нейтральная дельта означает, что продавцы опционов в целом индифферентны к направлению движения цены.</small>");
-        }
-        htmlBuilder.AppendLine("</div>");
-        
-        htmlBuilder.AppendLine("</div>"); // Close card-body
-        htmlBuilder.AppendLine("</div>"); // Close card
-        htmlBuilder.AppendLine("</div>"); // Close col
-        
-        // Gamma Exposure
-        htmlBuilder.AppendLine("<div class='col-md-6'>");
-        htmlBuilder.AppendLine("<div class='card h-100'>");
-        htmlBuilder.AppendLine("<div class='card-header'>Gamma Exposure</div>");
-        htmlBuilder.AppendLine("<div class='card-body'>");
-        
-        string gammaClass = totalGammaSellers >= 0 ? "text-success" : "text-danger";
-        
-        htmlBuilder.AppendLine("<h4 class='text-center mb-4'>");
-        htmlBuilder.AppendLine($"<span class='{gammaClass}'>{totalGammaSellers:N2}</span>");
-        htmlBuilder.AppendLine("</h4>");
-        
-        htmlBuilder.AppendLine("<div class='d-flex justify-content-between'>");
-        htmlBuilder.AppendLine("<span>Call Gamma:</span>");
-        htmlBuilder.AppendLine($"<strong>{totalCallGamma:N2}</strong>");
-        htmlBuilder.AppendLine("</div>");
-        
-        htmlBuilder.AppendLine("<div class='d-flex justify-content-between'>");
-        htmlBuilder.AppendLine("<span>Put Gamma:</span>");
-        htmlBuilder.AppendLine($"<strong>{totalPutGamma:N2}</strong>");
-        htmlBuilder.AppendLine("</div>");
-        
-        // Interpretation for Gamma
-        htmlBuilder.AppendLine("<div class='alert alert-light mt-3 mb-0'>");
-        if (totalGammaSellers > 0)
-        {
-            htmlBuilder.AppendLine("<small>Положительная гамма означает, что продавцы опционов выигрывают от высокой волатильности и резких движений цены.</small>");
-        }
-        else if (totalGammaSellers < 0)
-        {
-            htmlBuilder.AppendLine("<small>Отрицательная гамма означает, что продавцы опционов проигрывают от высокой волатильности и выигрывают от стабильной цены.</small>");
-        }
-        else
-        {
-            htmlBuilder.AppendLine("<small>Нейтральная гамма означает, что продавцы опционов в целом индифферентны к волатильности актива.</small>");
-        }
-        htmlBuilder.AppendLine("</div>");
-        
-        htmlBuilder.AppendLine("</div>"); // Close card-body
-        htmlBuilder.AppendLine("</div>"); // Close card
-        htmlBuilder.AppendLine("</div>"); // Close col
-        
-        htmlBuilder.AppendLine("</div>"); // Close row
-        
-        htmlBuilder.AppendLine("</div>"); // Close card-body
-        htmlBuilder.AppendLine("</div>"); // Close card
-    }
-    
-    // Interpretation and Recommendation section
-    htmlBuilder.AppendLine("<div class='card mb-3'>");
-    htmlBuilder.AppendLine("<div class='card-header bg-light'>");
-    htmlBuilder.AppendLine("<h5 class='mb-0'>Интерпретация и рекомендации</h5>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("<div class='card-body'>");
-    
-    // Main interpretation based on break-even points
-    if (breakEvenPoints.Count >= 2)
-    {
-        // Найдем ближайшие точки безубытка
-        double? lowerBreakEven = breakEvenPoints.Where(p => p < currentPrice).DefaultIfEmpty(double.NaN).Max();
-        double? upperBreakEven = breakEvenPoints.Where(p => p > currentPrice).DefaultIfEmpty(double.NaN).Min();
 
-        if (!double.IsNaN((double)lowerBreakEven) && !double.IsNaN((double)upperBreakEven))
+        htmlBuilder.AppendLine("<div class='row'>");
+
+        // Current price
+        htmlBuilder.AppendLine("<div class='col-md-3 col-sm-6 mb-3'>");
+        htmlBuilder.AppendLine("<div class='card h-100'>");
+        htmlBuilder.AppendLine("<div class='card-body text-center'>");
+        htmlBuilder.AppendLine("<h6 class='text-muted'>Текущая цена</h6>");
+        htmlBuilder.AppendLine($"<h4 class='mb-0'>{currentPrice:F2}</h4>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+
+        // Total premium
+        htmlBuilder.AppendLine("<div class='col-md-3 col-sm-6 mb-3'>");
+        htmlBuilder.AppendLine("<div class='card h-100'>");
+        htmlBuilder.AppendLine("<div class='card-body text-center'>");
+        htmlBuilder.AppendLine("<h6 class='text-muted'>Общая премия</h6>");
+        htmlBuilder.AppendLine($"<h4 class='mb-0'>{totalPremium:N0}</h4>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+
+        // Call premium
+        htmlBuilder.AppendLine("<div class='col-md-3 col-sm-6 mb-3'>");
+        htmlBuilder.AppendLine("<div class='card h-100'>");
+        htmlBuilder.AppendLine("<div class='card-body text-center'>");
+        htmlBuilder.AppendLine("<h6 class='text-muted'>Call премия</h6>");
+        htmlBuilder.AppendLine($"<h4 class='mb-0'>{totalCallPremium:N0}</h4>");
+        htmlBuilder.AppendLine($"<small class='text-muted'>({totalCallPremium / totalPremium * 100:F1}%)</small>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+
+        // Put premium
+        htmlBuilder.AppendLine("<div class='col-md-3 col-sm-6 mb-3'>");
+        htmlBuilder.AppendLine("<div class='card h-100'>");
+        htmlBuilder.AppendLine("<div class='card-body text-center'>");
+        htmlBuilder.AppendLine("<h6 class='text-muted'>Put премия</h6>");
+        htmlBuilder.AppendLine($"<h4 class='mb-0'>{totalPutPremium:N0}</h4>");
+        htmlBuilder.AppendLine($"<small class='text-muted'>({totalPutPremium / totalPremium * 100:F1}%)</small>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+
+        htmlBuilder.AppendLine("</div>"); // Close row
+
+        htmlBuilder.AppendLine("</div>"); // Close card-body
+        htmlBuilder.AppendLine("</div>"); // Close card
+
+        // 2. Определяем диапазон цен для анализа
+        double minStrike = data.Min(d => d.Strike);
+        double maxStrike = data.Max(d => d.Strike);
+
+        // Чтобы не упустить безубыточные точки вне диапазона страйков, расширим диапазон на 30%
+        double rangeExtensionPercent = 0.3;
+        double minPrice = minStrike * (1 - rangeExtensionPercent);
+        double maxPrice = maxStrike * (1 + rangeExtensionPercent);
+
+        // Шаг для анализа (примерно 0.1% от текущей цены)
+        double step = currentPrice * 0.001;
+
+        // 3. Анализируем профит/убыток продавца на разных уровнях цены
+        List<(double Price, double TotalPnL, double CallPnL, double PutPnL)> pnlData = new();
+
+        for (double price = minPrice; price <= maxPrice; price += step)
         {
-            // Определим, в какой части диапазона между точками безубытка находится текущая цена
-            double rangePosition = (currentPrice - (double)lowerBreakEven) /
-                                   ((double)upperBreakEven - (double)lowerBreakEven);
-            
-            htmlBuilder.AppendLine("<div class='alert alert-light'>");
-            
-            if (rangePosition < 0.2)
+            double callPnL = CalculateSellerCallPnL(data, price);
+            double putPnL = CalculateSellerPutPnL(data, price);
+            double totalPnL = callPnL + putPnL;
+
+            pnlData.Add((price, totalPnL, callPnL, putPnL));
+        }
+
+        // 4. Анализируем убытки на текущей цене
+        (double Price, double TotalPnL, double CallPnL, double PutPnL) currentPnL =
+            pnlData.FirstOrDefault(p => Math.Abs(p.Price - currentPrice) < step / 2);
+        if (currentPnL == default)
+        {
+            // Если точно не нашли, найдем ближайшую точку
+            currentPnL = pnlData.OrderBy(p => Math.Abs(p.Price - currentPrice)).First();
+        }
+
+        // Current position card
+        htmlBuilder.AppendLine("<div class='card mb-3'>");
+        htmlBuilder.AppendLine("<div class='card-header bg-light'>");
+        htmlBuilder.AppendLine("<h5 class='mb-0'>Позиция продавца при текущей цене</h5>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("<div class='card-body'>");
+
+        htmlBuilder.AppendLine("<div class='row'>");
+
+        // Total PnL at current price
+        string pnlClass = currentPnL.TotalPnL >= 0 ? "text-success" : "text-danger";
+        string pnlIcon = currentPnL.TotalPnL >= 0 ? "bi-graph-up-arrow" : "bi-graph-down-arrow";
+
+        htmlBuilder.AppendLine("<div class='col-md-4 mb-3'>");
+        htmlBuilder.AppendLine("<div class='card h-100'>");
+        htmlBuilder.AppendLine("<div class='card-body text-center'>");
+        htmlBuilder.AppendLine("<h6 class='text-muted'>Общий PnL</h6>");
+        htmlBuilder.AppendLine($"<h4 class='mb-0 {pnlClass}'>");
+        htmlBuilder.AppendLine($"<i class='bi {pnlIcon} me-2'></i>{currentPnL.TotalPnL:N0}</h4>");
+
+        if (currentPnL.TotalPnL < 0)
+        {
+            htmlBuilder.AppendLine(
+                $"<small class='text-muted'>({Math.Abs(currentPnL.TotalPnL) / totalPremium * 100:F1}% от премии)</small>");
+        }
+
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+
+        // Call PnL at current price
+        string callPnlClass = currentPnL.CallPnL >= 0 ? "text-success" : "text-danger";
+
+        htmlBuilder.AppendLine("<div class='col-md-4 mb-3'>");
+        htmlBuilder.AppendLine("<div class='card h-100'>");
+        htmlBuilder.AppendLine("<div class='card-body text-center'>");
+        htmlBuilder.AppendLine("<h6 class='text-muted'>PnL от Call</h6>");
+        htmlBuilder.AppendLine($"<h4 class='mb-0 {callPnlClass}'>{currentPnL.CallPnL:N0}</h4>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+
+        // Put PnL at current price
+        string putPnlClass = currentPnL.PutPnL >= 0 ? "text-success" : "text-danger";
+
+        htmlBuilder.AppendLine("<div class='col-md-4 mb-3'>");
+        htmlBuilder.AppendLine("<div class='card h-100'>");
+        htmlBuilder.AppendLine("<div class='card-body text-center'>");
+        htmlBuilder.AppendLine("<h6 class='text-muted'>PnL от Put</h6>");
+        htmlBuilder.AppendLine($"<h4 class='mb-0 {putPnlClass}'>{currentPnL.PutPnL:N0}</h4>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+
+        htmlBuilder.AppendLine("</div>"); // Close row
+
+        // Status alert
+        string alertClass = currentPnL.TotalPnL >= 0 ? "alert-success" : "alert-secondary";
+
+        htmlBuilder.AppendLine($"<div class='alert {alertClass} mt-3'>");
+        if (currentPnL.TotalPnL >= 0)
+        {
+            htmlBuilder.AppendLine(
+                "<i class='bi bi-check-circle me-2'></i><strong>Продавец в прибыли</strong> на текущем уровне цены");
+        }
+        else
+        {
+            htmlBuilder.AppendLine(
+                "<i class='bi bi-exclamation-triangle me-2'></i><strong>Продавец в убытке</strong> на текущем уровне цены");
+            htmlBuilder.AppendLine(
+                $"<p class='mb-0 mt-2'>Размер убытка: <strong>{Math.Abs(currentPnL.TotalPnL):N0}</strong> " +
+                $"({Math.Abs(currentPnL.TotalPnL) / totalPremium * 100:F1}% от полученной премии)</p>");
+        }
+
+        htmlBuilder.AppendLine("</div>");
+
+        htmlBuilder.AppendLine("</div>"); // Close card-body
+        htmlBuilder.AppendLine("</div>"); // Close card
+
+        // 5. Находим безубыточные зоны (где PnL >= 0)
+        List<(double LowerBound, double UpperBound)> profitZones = new();
+
+        for (int i = 0; i < pnlData.Count - 1; i++)
+        {
+            if (pnlData[i].TotalPnL >= 0 && (i == 0 || pnlData[i - 1].TotalPnL < 0))
             {
-                htmlBuilder.AppendLine("<p><i class='bi bi-info-circle me-2'></i><strong>Позиция в диапазоне:</strong> Текущая цена находится очень близко к нижней точке безубытка.</p>");
-                htmlBuilder.AppendLine("<p><strong>Рекомендация:</strong> Существует высокая вероятность отскока вверх или пробоя вниз. Возможны среднесрочные длинные позиции с защитным стоп-лоссом ниже точки безубытка.</p>");
+                // Начало зоны прибыли
+                double lowerBound = pnlData[i].Price;
+
+                // Ищем конец зоны прибыли
+                double upperBound = maxPrice;
+                for (int j = i + 1; j < pnlData.Count; j++)
+                {
+                    if (pnlData[j].TotalPnL < 0)
+                    {
+                        upperBound = pnlData[j - 1].Price;
+                        break;
+                    }
+                }
+
+                profitZones.Add((lowerBound, upperBound));
+
+                // Переходим к поиску следующей зоны прибыли
+                while (i < pnlData.Count && pnlData[i].TotalPnL >= 0)
+                {
+                    i++;
+                }
             }
-            else if (rangePosition > 0.8)
+        }
+
+        // 7. Находим нижнюю и верхнюю точки безубытка (ближайшие к текущей цене)
+        // Сначала находим все точки безубытка (переходы через 0)
+        List<double> breakEvenPoints = new();
+
+        for (int i = 0; i < pnlData.Count - 1; i++)
+        {
+            // Если PnL меняет знак между соседними точками - это точка безубытка
+            if ((pnlData[i].TotalPnL >= 0 && pnlData[i + 1].TotalPnL < 0) ||
+                (pnlData[i].TotalPnL < 0 && pnlData[i + 1].TotalPnL >= 0))
             {
-                htmlBuilder.AppendLine("<p><i class='bi bi-info-circle me-2'></i><strong>Позиция в диапазоне:</strong> Текущая цена находится очень близко к верхней точке безубытка.</p>");
-                htmlBuilder.AppendLine("<p><strong>Рекомендация:</strong> Существует высокая вероятность отскока вниз или пробоя вверх. Возможны среднесрочные короткие позиции с защитным стоп-лоссом выше точки безубытка.</p>");
+                // Линейная интерполяция для нахождения точного значения
+                double pnl1 = pnlData[i].TotalPnL;
+                double pnl2 = pnlData[i + 1].TotalPnL;
+                double price1 = pnlData[i].Price;
+                double price2 = pnlData[i + 1].Price;
+
+                // Формула линейной интерполяции: price = price1 + (0 - pnl1) * (price2 - price1) / (pnl2 - pnl1)
+                double breakEvenPrice = price1 + (0 - pnl1) * (price2 - price1) / (pnl2 - pnl1);
+                breakEvenPoints.Add(breakEvenPrice);
             }
-            else if (rangePosition >= 0.4 && rangePosition <= 0.6)
-            {
-                htmlBuilder.AppendLine("<p><i class='bi bi-info-circle me-2'></i><strong>Позиция в диапазоне:</strong> Текущая цена находится примерно в середине диапазона между точками безубытка.</p>");
-                htmlBuilder.AppendLine("<p><strong>Рекомендация:</strong> Боковое движение наиболее вероятно. Рассмотрите стратегии диапазонной торговли между точками безубытка.</p>");
-            }
-            else if (rangePosition < 0.4)
-            {
-                htmlBuilder.AppendLine("<p><i class='bi bi-info-circle me-2'></i><strong>Позиция в диапазоне:</strong> Текущая цена находится ближе к нижней точке безубытка.</p>");
-                htmlBuilder.AppendLine("<p><strong>Рекомендация:</strong> Повышенная вероятность движения вверх в среднесрочной перспективе. Предпочтительны длинные позиции.</p>");
-            }
-            else // rangePosition > 0.6
-            {
-                htmlBuilder.AppendLine("<p><i class='bi bi-info-circle me-2'></i><strong>Позиция в диапазоне:</strong> Текущая цена находится ближе к верхней точке безубытка.</p>");
-                htmlBuilder.AppendLine("<p><strong>Рекомендация:</strong> Повышенная вероятность движения вниз в среднесрочной перспективе. Предпочтительны короткие позиции.</p>");
-            }
-            
+        }
+
+        // Сортируем точки безубытка
+        breakEvenPoints.Sort();
+
+        // 6. Находим точки максимальной прибыли и максимального убытка
+        (double Price, double TotalPnL, double CallPnL, double PutPnL) maxProfitPoint =
+            pnlData.OrderByDescending(p => p.TotalPnL).First();
+        (double Price, double TotalPnL, double CallPnL, double PutPnL) maxLossPoint =
+            pnlData.OrderBy(p => p.TotalPnL).First();
+
+        // Key Price Levels card
+        htmlBuilder.AppendLine("<div class='card mb-3'>");
+        htmlBuilder.AppendLine("<div class='card-header bg-light'>");
+        htmlBuilder.AppendLine("<h5 class='mb-0'>Ключевые ценовые уровни</h5>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("<div class='card-body'>");
+
+        htmlBuilder.AppendLine("<div class='row'>");
+
+        // Maximum Profit Point
+        htmlBuilder.AppendLine("<div class='col-md-6 mb-3'>");
+        htmlBuilder.AppendLine("<div class='card h-100'>");
+        htmlBuilder.AppendLine("<div class='card-header'>");
+        htmlBuilder.AppendLine("<h6 class='mb-0'><i class='bi bi-graph-up me-2'></i>Точка максимальной прибыли</h6>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("<div class='card-body'>");
+        htmlBuilder.AppendLine("<div class='d-flex justify-content-between'>");
+        htmlBuilder.AppendLine("<span>Уровень цены:</span>");
+        htmlBuilder.AppendLine($"<strong>{maxProfitPoint.Price:F2}</strong>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("<div class='d-flex justify-content-between'>");
+        htmlBuilder.AppendLine("<span>Максимальная прибыль:</span>");
+        htmlBuilder.AppendLine($"<strong class='text-success'>{maxProfitPoint.TotalPnL:N0}</strong>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+
+        // Maximum Loss Point
+        htmlBuilder.AppendLine("<div class='col-md-6 mb-3'>");
+        htmlBuilder.AppendLine("<div class='card h-100'>");
+        htmlBuilder.AppendLine("<div class='card-header'>");
+        htmlBuilder.AppendLine("<h6 class='mb-0'><i class='bi bi-graph-down me-2'></i>Точка максимального убытка</h6>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("<div class='card-body'>");
+        htmlBuilder.AppendLine("<div class='d-flex justify-content-between'>");
+        htmlBuilder.AppendLine("<span>Уровень цены:</span>");
+        htmlBuilder.AppendLine($"<strong>{maxLossPoint.Price:F2}</strong>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("<div class='d-flex justify-content-between'>");
+        htmlBuilder.AppendLine("<span>Максимальный убыток:</span>");
+        htmlBuilder.AppendLine($"<strong class='text-danger'>{maxLossPoint.TotalPnL:N0}</strong>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+
+        htmlBuilder.AppendLine("</div>"); // Close row
+
+        // Break-even points section
+        htmlBuilder.AppendLine("<h5 class='mt-4 mb-3'>Точки безубытка</h5>");
+
+        if (breakEvenPoints.Count == 0)
+        {
+            htmlBuilder.AppendLine("<div class='alert alert-secondary'>");
+            htmlBuilder.AppendLine(
+                "<i class='bi bi-info-circle me-2'></i>Точек безубытка не найдено в анализируемом диапазоне цен.");
             htmlBuilder.AppendLine("</div>");
         }
+        else
+        {
+            // Table of break-even points
+            htmlBuilder.AppendLine("<div class='table-responsive'>");
+            htmlBuilder.AppendLine("<table class='table table-bordered'>");
+            htmlBuilder.AppendLine("<thead class='table-light'>");
+            htmlBuilder.AppendLine("<tr>");
+            htmlBuilder.AppendLine("<th>#</th>");
+            htmlBuilder.AppendLine("<th>Уровень цены</th>");
+            htmlBuilder.AppendLine("<th>Отклонение от текущей цены</th>");
+            htmlBuilder.AppendLine("<th>Процентное отклонение</th>");
+            htmlBuilder.AppendLine("</tr>");
+            htmlBuilder.AppendLine("</thead>");
+            htmlBuilder.AppendLine("<tbody>");
+
+            for (int i = 0; i < breakEvenPoints.Count; i++)
+            {
+                double point = breakEvenPoints[i];
+                double deviation = point - currentPrice;
+                double percentDeviation = deviation / currentPrice * 100;
+                string deviationClass = deviation >= 0 ? "text-success" : "text-danger";
+
+                htmlBuilder.AppendLine("<tr>");
+                htmlBuilder.AppendLine($"<td>{i + 1}</td>");
+                htmlBuilder.AppendLine($"<td><strong>{point:F2}</strong></td>");
+                htmlBuilder.AppendLine($"<td class='{deviationClass}'>{deviation:F2}</td>");
+                htmlBuilder.AppendLine($"<td class='{deviationClass}'>{percentDeviation:F2}%</td>");
+                htmlBuilder.AppendLine("</tr>");
+            }
+
+            htmlBuilder.AppendLine("</tbody>");
+            htmlBuilder.AppendLine("</table>");
+            htmlBuilder.AppendLine("</div>");
+
+            // Находим ближайшие точки безубытка снизу и сверху от текущей цены
+            double? lowerBreakEven = breakEvenPoints.Where(p => p < currentPrice).DefaultIfEmpty(double.NaN).Max();
+            double? upperBreakEven = breakEvenPoints.Where(p => p > currentPrice).DefaultIfEmpty(double.NaN).Min();
+
+            htmlBuilder.AppendLine("<div class='row mt-4'>");
+
+            // Ближайшая нижняя точка безубытка
+            htmlBuilder.AppendLine("<div class='col-md-6 mb-3'>");
+            if (!double.IsNaN((double)lowerBreakEven))
+            {
+                double lowerDeviation = (double)lowerBreakEven - currentPrice;
+                double lowerPercentDeviation = lowerDeviation / currentPrice * 100;
+
+                htmlBuilder.AppendLine("<div class='card h-100'>");
+                htmlBuilder.AppendLine("<div class='card-header'>");
+                htmlBuilder.AppendLine(
+                    "<h6 class='mb-0'><i class='bi bi-arrow-down me-2'></i>Нижняя точка безубытка</h6>");
+                htmlBuilder.AppendLine("</div>");
+                htmlBuilder.AppendLine("<div class='card-body'>");
+                htmlBuilder.AppendLine("<div class='d-flex justify-content-between'>");
+                htmlBuilder.AppendLine("<span>Уровень цены:</span>");
+                htmlBuilder.AppendLine($"<strong>{lowerBreakEven:F2}</strong>");
+                htmlBuilder.AppendLine("</div>");
+                htmlBuilder.AppendLine("<div class='d-flex justify-content-between'>");
+                htmlBuilder.AppendLine("<span>Отклонение:</span>");
+                htmlBuilder.AppendLine(
+                    $"<strong class='text-danger'>{lowerDeviation:F2} ({lowerPercentDeviation:F2}%)</strong>");
+                htmlBuilder.AppendLine("</div>");
+                htmlBuilder.AppendLine("</div>");
+                htmlBuilder.AppendLine("</div>");
+            }
+            else
+            {
+                htmlBuilder.AppendLine("<div class='alert alert-secondary h-100'>");
+                htmlBuilder.AppendLine(
+                    "<i class='bi bi-info-circle me-2'></i>Нижняя точка безубытка не найдена в анализируемом диапазоне.");
+                htmlBuilder.AppendLine("</div>");
+            }
+
+            htmlBuilder.AppendLine("</div>");
+
+            // Ближайшая верхняя точка безубытка
+            htmlBuilder.AppendLine("<div class='col-md-6 mb-3'>");
+            if (!double.IsNaN((double)upperBreakEven))
+            {
+                double upperDeviation = (double)upperBreakEven - currentPrice;
+                double upperPercentDeviation = upperDeviation / currentPrice * 100;
+
+                htmlBuilder.AppendLine("<div class='card h-100'>");
+                htmlBuilder.AppendLine("<div class='card-header'>");
+                htmlBuilder.AppendLine(
+                    "<h6 class='mb-0'><i class='bi bi-arrow-up me-2'></i>Верхняя точка безубытка</h6>");
+                htmlBuilder.AppendLine("</div>");
+                htmlBuilder.AppendLine("<div class='card-body'>");
+                htmlBuilder.AppendLine("<div class='d-flex justify-content-between'>");
+                htmlBuilder.AppendLine("<span>Уровень цены:</span>");
+                htmlBuilder.AppendLine($"<strong>{upperBreakEven:F2}</strong>");
+                htmlBuilder.AppendLine("</div>");
+                htmlBuilder.AppendLine("<div class='d-flex justify-content-between'>");
+                htmlBuilder.AppendLine("<span>Отклонение:</span>");
+                htmlBuilder.AppendLine(
+                    $"<strong class='text-success'>{upperDeviation:F2} ({upperPercentDeviation:F2}%)</strong>");
+                htmlBuilder.AppendLine("</div>");
+                htmlBuilder.AppendLine("</div>");
+                htmlBuilder.AppendLine("</div>");
+            }
+            else
+            {
+                htmlBuilder.AppendLine("<div class='alert alert-secondary h-100'>");
+                htmlBuilder.AppendLine(
+                    "<i class='bi bi-info-circle me-2'></i>Верхняя точка безубытка не найдена в анализируемом диапазоне.");
+                htmlBuilder.AppendLine("</div>");
+            }
+
+            htmlBuilder.AppendLine("</div>");
+
+            htmlBuilder.AppendLine("</div>"); // Close row
+
+            // Potential price range
+            if (!double.IsNaN((double)lowerBreakEven) && !double.IsNaN((double)upperBreakEven))
+            {
+                double rangeWidth = (double)upperBreakEven - (double)lowerBreakEven;
+                double rangePercent = rangeWidth / currentPrice * 100;
+
+                htmlBuilder.AppendLine("<div class='alert alert-secondary mt-3 mb-3'>");
+                htmlBuilder.AppendLine(
+                    "<h5><i class='bi bi-arrows-expand me-2'></i>Вероятный диапазон движения цены</h5>");
+                htmlBuilder.AppendLine("<div class='d-flex justify-content-between'>");
+                htmlBuilder.AppendLine(
+                    $"<span>Диапазон: <strong>{lowerBreakEven:F2} - {upperBreakEven:F2}</strong></span>");
+                htmlBuilder.AppendLine($"<span>Ширина: <strong>{rangeWidth:F2} ({rangePercent:F2}%)</strong></span>");
+                htmlBuilder.AppendLine("</div>");
+
+                // Находим преобладающую силу: растущую или падающую
+                double distanceToLower = currentPrice - (double)lowerBreakEven;
+                double distanceToUpper = (double)upperBreakEven - currentPrice;
+
+                if (distanceToLower * 1.2 < distanceToUpper)
+                {
+                    htmlBuilder.AppendLine("<div class='alert alert-secondary mt-2 mb-0'>");
+                    htmlBuilder.AppendLine(
+                        "<i class='bi bi-exclamation-triangle me-2'></i><strong>Внимание:</strong> Текущая цена значительно ближе к нижней точке безубытка.");
+                    htmlBuilder.AppendLine(
+                        "<p class='mb-0'>Это указывает на повышенный риск пробоя вниз и возможное значительное падение цены.</p>");
+                    htmlBuilder.AppendLine("</div>");
+                }
+                else if (distanceToUpper * 1.2 < distanceToLower)
+                {
+                    htmlBuilder.AppendLine("<div class='alert alert-secondary mt-2 mb-0'>");
+                    htmlBuilder.AppendLine(
+                        "<i class='bi bi-exclamation-triangle me-2'></i><strong>Внимание:</strong> Текущая цена значительно ближе к верхней точке безубытка.");
+                    htmlBuilder.AppendLine(
+                        "<p class='mb-0'>Это указывает на повышенный риск пробоя вверх и возможное значительное повышение цены.</p>");
+                    htmlBuilder.AppendLine("</div>");
+                }
+                else
+                {
+                    htmlBuilder.AppendLine("<div class='alert alert-secondary mt-2 mb-0'>");
+                    htmlBuilder.AppendLine(
+                        "<i class='bi bi-info-circle me-2'></i>Текущая цена находится в относительно сбалансированном положении между точками безубытка.");
+                    htmlBuilder.AppendLine("</div>");
+                }
+
+                htmlBuilder.AppendLine("</div>");
+            }
+        }
+
+        // Profit Zones section
+        htmlBuilder.AppendLine("<h5 class='mt-4 mb-3'>Безубыточные зоны для продавца</h5>");
+
+        if (profitZones.Count == 0)
+        {
+            htmlBuilder.AppendLine("<div class='alert alert-secondary'>");
+            htmlBuilder.AppendLine(
+                "<i class='bi bi-exclamation-triangle me-2'></i>Продавец в убытке на всём рассматриваемом диапазоне цен.");
+            htmlBuilder.AppendLine("</div>");
+        }
+        else
+        {
+            // Table of profit zones
+            htmlBuilder.AppendLine("<div class='table-responsive'>");
+            htmlBuilder.AppendLine("<table class='table table-bordered'>");
+            htmlBuilder.AppendLine("<thead class='table-light'>");
+            htmlBuilder.AppendLine("<tr>");
+            htmlBuilder.AppendLine("<th>#</th>");
+            htmlBuilder.AppendLine("<th>Нижняя граница</th>");
+            htmlBuilder.AppendLine("<th>Верхняя граница</th>");
+            htmlBuilder.AppendLine("<th>Ширина диапазона</th>");
+            htmlBuilder.AppendLine("<th>% от текущей цены</th>");
+            htmlBuilder.AppendLine("</tr>");
+            htmlBuilder.AppendLine("</thead>");
+            htmlBuilder.AppendLine("<tbody>");
+
+            for (int i = 0; i < profitZones.Count; i++)
+            {
+                var zone = profitZones[i];
+                double zoneWidth = zone.UpperBound - zone.LowerBound;
+                double zonePercentWidth = zoneWidth / currentPrice * 100;
+
+                string rowClass = "";
+                if (currentPrice >= zone.LowerBound && currentPrice <= zone.UpperBound)
+                {
+                    rowClass = "table-light";
+                }
+
+                htmlBuilder.AppendLine($"<tr class='{rowClass}'>");
+                htmlBuilder.AppendLine($"<td>{i + 1}</td>");
+                htmlBuilder.AppendLine($"<td>{zone.LowerBound:F2}</td>");
+                htmlBuilder.AppendLine($"<td>{zone.UpperBound:F2}</td>");
+                htmlBuilder.AppendLine($"<td>{zoneWidth:F2}</td>");
+                htmlBuilder.AppendLine($"<td>{zonePercentWidth:F2}%</td>");
+                htmlBuilder.AppendLine("</tr>");
+            }
+
+            htmlBuilder.AppendLine("</tbody>");
+            htmlBuilder.AppendLine("</table>");
+            htmlBuilder.AppendLine("</div>");
+
+            // If seller is currently at a loss, show closest profit zone
+            if (currentPnL.TotalPnL < 0)
+            {
+                // Находим ближайшую зону безубытка
+                var closest = profitZones
+                    .Select(zone => new
+                    {
+                        Zone = zone,
+                        Distance = Math.Min(
+                            Math.Abs(zone.LowerBound - currentPrice),
+                            Math.Abs(zone.UpperBound - currentPrice)
+                        )
+                    })
+                    .OrderBy(x => x.Distance)
+                    .First();
+
+                htmlBuilder.AppendLine("<div class='alert alert-secondary mt-3'>");
+                htmlBuilder.AppendLine(
+                    "<i class='bi bi-info-circle me-2'></i>Продавец опционов сейчас в убытке, что создает давление на движение цены к ближайшей зоне безубытка.");
+
+                if (closest.Zone.LowerBound <= currentPrice && closest.Zone.UpperBound >= currentPrice)
+                {
+                    htmlBuilder.AppendLine("<p class='mb-0'>Текущая цена находится внутри зоны безубытка.</p>");
+                }
+                else if (Math.Abs(closest.Zone.LowerBound - currentPrice) <
+                         Math.Abs(closest.Zone.UpperBound - currentPrice))
+                {
+                    htmlBuilder.AppendLine(
+                        $"<p class='mb-0'>Ближайший уровень безубытка находится снизу на уровне <strong>{closest.Zone.LowerBound:F2}</strong>. Возможно давление на цену в сторону снижения.</p>");
+                }
+                else
+                {
+                    htmlBuilder.AppendLine(
+                        $"<p class='mb-0'>Ближайший уровень безубытка находится сверху на уровне <strong>{closest.Zone.UpperBound:F2}</strong>. Возможно давление на цену в сторону повышения.</p>");
+                }
+
+                htmlBuilder.AppendLine("</div>");
+            }
+        }
+
+        htmlBuilder.AppendLine("</div>"); // Close card-body
+        htmlBuilder.AppendLine("</div>"); // Close card
+
+        // Delta/Gamma Exposure Analysis
+        if (!data.All(x => x.CallDelta == 0 || x.PutDelta == 0))
+        {
+            double totalCallDelta = 0.0, totalPutDelta = 0.0;
+            double totalCallGamma = 0.0, totalPutGamma = 0.0;
+
+            foreach (OptionData option in data)
+            {
+                totalCallDelta += option.CallDelta * option.CallOi;
+                totalPutDelta += option.PutDelta * option.PutOi;
+                totalCallGamma += option.CallGamma * option.CallOi;
+                totalPutGamma += option.PutGamma * option.PutOi;
+            }
+
+            double totalDeltaSellers = -(totalCallDelta + totalPutDelta);
+            double totalGammaSellers = -(totalCallGamma + totalPutGamma);
+
+            htmlBuilder.AppendLine("<div class='card mb-3'>");
+            htmlBuilder.AppendLine("<div class='card-header bg-light'>");
+            htmlBuilder.AppendLine("<h5 class='mb-0'>Delta/Gamma Exposure Анализ</h5>");
+            htmlBuilder.AppendLine("</div>");
+            htmlBuilder.AppendLine("<div class='card-body'>");
+
+            htmlBuilder.AppendLine("<div class='row'>");
+
+            // Delta Exposure
+            htmlBuilder.AppendLine("<div class='col-md-6'>");
+            htmlBuilder.AppendLine("<div class='card h-100'>");
+            htmlBuilder.AppendLine("<div class='card-header'>Delta Exposure</div>");
+            htmlBuilder.AppendLine("<div class='card-body'>");
+
+            string deltaClass = totalDeltaSellers >= 0 ? "text-success" : "text-danger";
+            string deltaIcon = totalDeltaSellers >= 0 ? "bi-arrow-up-circle" : "bi-arrow-down-circle";
+
+            htmlBuilder.AppendLine("<h4 class='text-center mb-4'>");
+            htmlBuilder.AppendLine($"<i class='bi {deltaIcon} me-2'></i>");
+            htmlBuilder.AppendLine($"<span class='{deltaClass}'>{totalDeltaSellers:N2}</span>");
+            htmlBuilder.AppendLine("</h4>");
+
+            htmlBuilder.AppendLine("<div class='d-flex justify-content-between'>");
+            htmlBuilder.AppendLine("<span>Call Delta:</span>");
+            htmlBuilder.AppendLine($"<strong>{totalCallDelta:N2}</strong>");
+            htmlBuilder.AppendLine("</div>");
+
+            htmlBuilder.AppendLine("<div class='d-flex justify-content-between'>");
+            htmlBuilder.AppendLine("<span>Put Delta:</span>");
+            htmlBuilder.AppendLine($"<strong>{totalPutDelta:N2}</strong>");
+            htmlBuilder.AppendLine("</div>");
+
+            // Interpretation for Delta
+            htmlBuilder.AppendLine("<div class='alert alert-light mt-3 mb-0'>");
+            if (totalDeltaSellers > 0)
+            {
+                htmlBuilder.AppendLine(
+                    "<small>Положительная дельта означает, что продавцы опционов в целом выигрывают от роста цены актива.</small>");
+            }
+            else if (totalDeltaSellers < 0)
+            {
+                htmlBuilder.AppendLine(
+                    "<small>Отрицательная дельта означает, что продавцы опционов в целом выигрывают от падения цены актива.</small>");
+            }
+            else
+            {
+                htmlBuilder.AppendLine(
+                    "<small>Нейтральная дельта означает, что продавцы опционов в целом индифферентны к направлению движения цены.</small>");
+            }
+
+            htmlBuilder.AppendLine("</div>");
+
+            htmlBuilder.AppendLine("</div>"); // Close card-body
+            htmlBuilder.AppendLine("</div>"); // Close card
+            htmlBuilder.AppendLine("</div>"); // Close col
+
+            // Gamma Exposure
+            htmlBuilder.AppendLine("<div class='col-md-6'>");
+            htmlBuilder.AppendLine("<div class='card h-100'>");
+            htmlBuilder.AppendLine("<div class='card-header'>Gamma Exposure</div>");
+            htmlBuilder.AppendLine("<div class='card-body'>");
+
+            string gammaClass = totalGammaSellers >= 0 ? "text-success" : "text-danger";
+
+            htmlBuilder.AppendLine("<h4 class='text-center mb-4'>");
+            htmlBuilder.AppendLine($"<span class='{gammaClass}'>{totalGammaSellers:N2}</span>");
+            htmlBuilder.AppendLine("</h4>");
+
+            htmlBuilder.AppendLine("<div class='d-flex justify-content-between'>");
+            htmlBuilder.AppendLine("<span>Call Gamma:</span>");
+            htmlBuilder.AppendLine($"<strong>{totalCallGamma:N2}</strong>");
+            htmlBuilder.AppendLine("</div>");
+
+            htmlBuilder.AppendLine("<div class='d-flex justify-content-between'>");
+            htmlBuilder.AppendLine("<span>Put Gamma:</span>");
+            htmlBuilder.AppendLine($"<strong>{totalPutGamma:N2}</strong>");
+            htmlBuilder.AppendLine("</div>");
+
+            // Interpretation for Gamma
+            htmlBuilder.AppendLine("<div class='alert alert-light mt-3 mb-0'>");
+            if (totalGammaSellers > 0)
+            {
+                htmlBuilder.AppendLine(
+                    "<small>Положительная гамма означает, что продавцы опционов выигрывают от высокой волатильности и резких движений цены.</small>");
+            }
+            else if (totalGammaSellers < 0)
+            {
+                htmlBuilder.AppendLine(
+                    "<small>Отрицательная гамма означает, что продавцы опционов проигрывают от высокой волатильности и выигрывают от стабильной цены.</small>");
+            }
+            else
+            {
+                htmlBuilder.AppendLine(
+                    "<small>Нейтральная гамма означает, что продавцы опционов в целом индифферентны к волатильности актива.</small>");
+            }
+
+            htmlBuilder.AppendLine("</div>");
+
+            htmlBuilder.AppendLine("</div>"); // Close card-body
+            htmlBuilder.AppendLine("</div>"); // Close card
+            htmlBuilder.AppendLine("</div>"); // Close col
+
+            htmlBuilder.AppendLine("</div>"); // Close row
+
+            htmlBuilder.AppendLine("</div>"); // Close card-body
+            htmlBuilder.AppendLine("</div>"); // Close card
+        }
+
+        // Interpretation and Recommendation section
+        htmlBuilder.AppendLine("<div class='card mb-3'>");
+        htmlBuilder.AppendLine("<div class='card-header bg-light'>");
+        htmlBuilder.AppendLine("<h5 class='mb-0'>Интерпретация и рекомендации</h5>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("<div class='card-body'>");
+
+        // Main interpretation based on break-even points
+        if (breakEvenPoints.Count >= 2)
+        {
+            // Найдем ближайшие точки безубытка
+            double? lowerBreakEven = breakEvenPoints.Where(p => p < currentPrice).DefaultIfEmpty(double.NaN).Max();
+            double? upperBreakEven = breakEvenPoints.Where(p => p > currentPrice).DefaultIfEmpty(double.NaN).Min();
+
+            if (!double.IsNaN((double)lowerBreakEven) && !double.IsNaN((double)upperBreakEven))
+            {
+                // Определим, в какой части диапазона между точками безубытка находится текущая цена
+                double rangePosition = (currentPrice - (double)lowerBreakEven) /
+                                       ((double)upperBreakEven - (double)lowerBreakEven);
+
+                htmlBuilder.AppendLine("<div class='alert alert-light'>");
+
+                if (rangePosition < 0.2)
+                {
+                    htmlBuilder.AppendLine(
+                        "<p><i class='bi bi-info-circle me-2'></i><strong>Позиция в диапазоне:</strong> Текущая цена находится очень близко к нижней точке безубытка.</p>");
+                    htmlBuilder.AppendLine(
+                        "<p><strong>Рекомендация:</strong> Существует высокая вероятность отскока вверх или пробоя вниз. Возможны среднесрочные длинные позиции с защитным стоп-лоссом ниже точки безубытка.</p>");
+                }
+                else if (rangePosition > 0.8)
+                {
+                    htmlBuilder.AppendLine(
+                        "<p><i class='bi bi-info-circle me-2'></i><strong>Позиция в диапазоне:</strong> Текущая цена находится очень близко к верхней точке безубытка.</p>");
+                    htmlBuilder.AppendLine(
+                        "<p><strong>Рекомендация:</strong> Существует высокая вероятность отскока вниз или пробоя вверх. Возможны среднесрочные короткие позиции с защитным стоп-лоссом выше точки безубытка.</p>");
+                }
+                else if (rangePosition >= 0.4 && rangePosition <= 0.6)
+                {
+                    htmlBuilder.AppendLine(
+                        "<p><i class='bi bi-info-circle me-2'></i><strong>Позиция в диапазоне:</strong> Текущая цена находится примерно в середине диапазона между точками безубытка.</p>");
+                    htmlBuilder.AppendLine(
+                        "<p><strong>Рекомендация:</strong> Боковое движение наиболее вероятно. Рассмотрите стратегии диапазонной торговли между точками безубытка.</p>");
+                }
+                else if (rangePosition < 0.4)
+                {
+                    htmlBuilder.AppendLine(
+                        "<p><i class='bi bi-info-circle me-2'></i><strong>Позиция в диапазоне:</strong> Текущая цена находится ближе к нижней точке безубытка.</p>");
+                    htmlBuilder.AppendLine(
+                        "<p><strong>Рекомендация:</strong> Повышенная вероятность движения вверх в среднесрочной перспективе. Предпочтительны длинные позиции.</p>");
+                }
+                else // rangePosition > 0.6
+                {
+                    htmlBuilder.AppendLine(
+                        "<p><i class='bi bi-info-circle me-2'></i><strong>Позиция в диапазоне:</strong> Текущая цена находится ближе к верхней точке безубытка.</p>");
+                    htmlBuilder.AppendLine(
+                        "<p><strong>Рекомендация:</strong> Повышенная вероятность движения вниз в среднесрочной перспективе. Предпочтительны короткие позиции.</p>");
+                }
+
+                htmlBuilder.AppendLine("</div>");
+            }
+        }
+
+        htmlBuilder.AppendLine("</div>"); // Close card-body
+        htmlBuilder.AppendLine("</div>"); // Close card
+
+        htmlBuilder.AppendLine("</div>"); // Close main div
+        htmlBuilder.AppendLine("</article>"); // Close article
+
+        return htmlBuilder.ToString();
     }
-    
-    htmlBuilder.AppendLine("</div>"); // Close card-body
-    htmlBuilder.AppendLine("</div>"); // Close card
-    
-    htmlBuilder.AppendLine("</div>"); // Close main div
-    htmlBuilder.AppendLine("</article>"); // Close article
-    
-    return htmlBuilder.ToString();
-}
-
-
-        
 
 
     private static string AnalyzePainGradientHtml(List<OptionData> data, double maxPainStrike, double currentPrice)
@@ -1672,469 +1712,364 @@ public class OptionsAnalysisHtmlBuilder : IOptionsAnalysisHtmlBuilder
 
         return htmlBuilder.ToString();
     }
-    
-    
+
+
     public string AnalyzePriceMovementPotentialHtml(List<OptionData> data, double currentPrice)
-{
-    var htmlBuilder = new StringBuilder();
-    
-    htmlBuilder.AppendLine("<article class='card mb-4'>");
-    htmlBuilder.AppendLine("<header class='bg-dark text-white p-3'>");
-    htmlBuilder.AppendLine("<h4>ПРОГНОЗ ПОТЕНЦИАЛЬНОГО ДВИЖЕНИЯ ЦЕНЫ</h4>");
-    htmlBuilder.AppendLine("</header>");
-    
-    htmlBuilder.AppendLine("<div class='p-3'>");
-    
-    // Идентификация ключевых уровней сопротивления (высокий объем Call)
-    List<OptionData> resistanceLevels = data
-        .Where(d => d.Strike > currentPrice)
-        .OrderBy(d => d.Strike)
-        .Take(3)
-        .Where(d => d.CallOi > d.PutOi)
-        .ToList();
+    {
+        var htmlBuilder = new StringBuilder();
 
-    // Идентификация ключевых уровней поддержки (высокий объем Put)
-    List<OptionData> supportLevels = data
-        .Where(d => d.Strike < currentPrice)
-        .OrderByDescending(d => d.Strike)
-        .Take(3)
-        .Where(d => d.PutOi > d.CallOi)
-        .ToList();
-    
-    // Support and Resistance Levels
-    htmlBuilder.AppendLine("<div class='row'>");
-    
-    // Support Levels
-    htmlBuilder.AppendLine("<div class='col-md-6 mb-4'>");
-    htmlBuilder.AppendLine("<div class='card h-100 border-success'>");
-    htmlBuilder.AppendLine("<div class='card-header bg-success text-white'>");
-    htmlBuilder.AppendLine("<h5 class='mb-0'><i class='bi bi-arrow-up-circle-fill me-2'></i>Ключевые уровни поддержки</h5>");
-    htmlBuilder.AppendLine("</div>");
-    
-    htmlBuilder.AppendLine("<div class='card-body'>");
-    
-    if (supportLevels.Any())
-    {
-        htmlBuilder.AppendLine("<div class='table-responsive'>");
-        htmlBuilder.AppendLine("<table class='table table-bordered table-hover'>");
-        htmlBuilder.AppendLine("<thead class='table-light'>");
-        htmlBuilder.AppendLine("<tr>");
-        htmlBuilder.AppendLine("<th>Страйк</th>");
-        htmlBuilder.AppendLine("<th>Put OI</th>");
-        htmlBuilder.AppendLine("<th>Call OI</th>");
-        htmlBuilder.AppendLine("<th>Соотношение</th>");
-        htmlBuilder.AppendLine("</tr>");
-        htmlBuilder.AppendLine("</thead>");
-        htmlBuilder.AppendLine("<tbody>");
-        
-        foreach (OptionData level in supportLevels.OrderBy(d => d.Strike))
-        {
-            double ratio = level.PutOi / level.CallOi;
-            htmlBuilder.AppendLine("<tr>");
-            htmlBuilder.AppendLine($"<td><strong>{level.Strike}</strong></td>");
-            htmlBuilder.AppendLine($"<td>{level.PutOi:N0}</td>");
-            htmlBuilder.AppendLine($"<td>{level.CallOi:N0}</td>");
-            htmlBuilder.AppendLine($"<td><span class='badge bg-success'>{ratio:F2}x</span></td>");
-            htmlBuilder.AppendLine("</tr>");
-        }
-        
-        htmlBuilder.AppendLine("</tbody>");
-        htmlBuilder.AppendLine("</table>");
-        htmlBuilder.AppendLine("</div>");
-    }
-    else
-    {
-        htmlBuilder.AppendLine("<div class='alert alert-warning'>");
-        htmlBuilder.AppendLine("<i class='bi bi-exclamation-triangle-fill me-2'></i>Ключевые уровни поддержки не выявлены");
-        htmlBuilder.AppendLine("</div>");
-    }
-    
-    htmlBuilder.AppendLine("</div>"); // Close card-body
-    htmlBuilder.AppendLine("</div>"); // Close card
-    htmlBuilder.AppendLine("</div>"); // Close col
-    
-    // Resistance Levels
-    htmlBuilder.AppendLine("<div class='col-md-6 mb-4'>");
-    htmlBuilder.AppendLine("<div class='card h-100 border-danger'>");
-    htmlBuilder.AppendLine("<div class='card-header bg-danger text-white'>");
-    htmlBuilder.AppendLine("<h5 class='mb-0'><i class='bi bi-arrow-down-circle-fill me-2'></i>Ключевые уровни сопротивления</h5>");
-    htmlBuilder.AppendLine("</div>");
-    
-    htmlBuilder.AppendLine("<div class='card-body'>");
-    
-    if (resistanceLevels.Any())
-    {
-        htmlBuilder.AppendLine("<div class='table-responsive'>");
-        htmlBuilder.AppendLine("<table class='table table-bordered table-hover'>");
-        htmlBuilder.AppendLine("<thead class='table-light'>");
-        htmlBuilder.AppendLine("<tr>");
-        htmlBuilder.AppendLine("<th>Страйк</th>");
-        htmlBuilder.AppendLine("<th>Call OI</th>");
-        htmlBuilder.AppendLine("<th>Put OI</th>");
-        htmlBuilder.AppendLine("<th>Соотношение</th>");
-        htmlBuilder.AppendLine("</tr>");
-        htmlBuilder.AppendLine("</thead>");
-        htmlBuilder.AppendLine("<tbody>");
-        
-        foreach (OptionData level in resistanceLevels)
-        {
-            double ratio = level.CallOi / level.PutOi;
-            htmlBuilder.AppendLine("<tr>");
-            htmlBuilder.AppendLine($"<td><strong>{level.Strike}</strong></td>");
-            htmlBuilder.AppendLine($"<td>{level.CallOi:N0}</td>");
-            htmlBuilder.AppendLine($"<td>{level.PutOi:N0}</td>");
-            htmlBuilder.AppendLine($"<td><span class='badge bg-danger'>{ratio:F2}x</span></td>");
-            htmlBuilder.AppendLine("</tr>");
-        }
-        
-        htmlBuilder.AppendLine("</tbody>");
-        htmlBuilder.AppendLine("</table>");
-        htmlBuilder.AppendLine("</div>");
-    }
-    else
-    {
-        htmlBuilder.AppendLine("<div class='alert alert-warning'>");
-        htmlBuilder.AppendLine("<i class='bi bi-exclamation-triangle-fill me-2'></i>Ключевые уровни сопротивления не выявлены");
-        htmlBuilder.AppendLine("</div>");
-    }
-    
-    htmlBuilder.AppendLine("</div>"); // Close card-body
-    htmlBuilder.AppendLine("</div>"); // Close card
-    htmlBuilder.AppendLine("</div>"); // Close col
-    
-    htmlBuilder.AppendLine("</div>"); // Close row
-    
-    // Расчет "силы" уровней
-    double totalOi = data.Sum(d => d.CallOi + d.PutOi);
-    
-    // Key metrics for price movement analysis
-    htmlBuilder.AppendLine("<div class='card mb-4'>");
-    htmlBuilder.AppendLine("<div class='card-header bg-primary text-white'>");
-    htmlBuilder.AppendLine("<h5 class='mb-0'>Ключевые метрики</h5>");
-    htmlBuilder.AppendLine("</div>");
-    
-    // Calculation of metrics
-    double callCenter = data.Sum(d => d.Strike * d.CallOi) / data.Sum(d => d.CallOi);
-    double putCenter = data.Sum(d => d.Strike * d.PutOi) / data.Sum(d => d.PutOi);
-    double equilibriumLevel = (callCenter + putCenter) / 2;
-    
-    // Max Pain calculation
-    List<PainResult> painResults = new List<PainResult>();
-    foreach (OptionData targetOption in data)
-    {
-        double targetStrike = targetOption.Strike;
-        double callLosses = 0;
-        double putLosses = 0;
+        htmlBuilder.AppendLine("<article class='card'>");
+        htmlBuilder.AppendLine("<header class='card-header bg-light'>");
+        htmlBuilder.AppendLine("<h4>Прогноз потенциального движения цены</h4>");
+        htmlBuilder.AppendLine("</header>");
+        htmlBuilder.AppendLine("<div class='card-body'>");
 
-        foreach (OptionData option in data)
-        {
-            callLosses += option.CallOi * Math.Max(0, targetStrike - option.Strike);
-            putLosses += option.PutOi * Math.Max(0, option.Strike - targetStrike);
-        }
+        // Идентификация ключевых уровней сопротивления (высокий объем Call)
+        List<OptionData> resistanceLevels = data
+            .Where(d => d.Strike > currentPrice)
+            .OrderBy(d => d.Strike)
+            .Take(3)
+            .Where(d => d.CallOi > d.PutOi)
+            .ToList();
 
-        painResults.Add(new PainResult
-        {
-            Strike = targetStrike,
-            CallLosses = callLosses,
-            PutLosses = putLosses,
-            TotalLosses = callLosses + putLosses
-        });
-    }
+        // Идентификация ключевых уровней поддержки (высокий объем Put)
+        List<OptionData> supportLevels = data
+            .Where(d => d.Strike < currentPrice)
+            .OrderByDescending(d => d.Strike)
+            .Take(3)
+            .Where(d => d.PutOi > d.CallOi)
+            .ToList();
 
-    double maxPainStrike = painResults.OrderBy(p => p.TotalLosses).First().Strike;
-    
-    // Call/Put Ratio
-    double callPutRatio = data.Sum(d => d.CallOi) / data.Sum(d => d.PutOi);
-    string sentimentClass;
-    string sentimentText;
-    
-    if (callPutRatio > 1.2)
-    {
-        sentimentClass = "bg-success";
-        sentimentText = "Бычий настрой";
-    }
-    else if (callPutRatio < 0.8)
-    {
-        sentimentClass = "bg-danger";
-        sentimentText = "Медвежий настрой";
-    }
-    else
-    {
-        sentimentClass = "bg-secondary";
-        sentimentText = "Нейтральный настрой";
-    }
-    
-    // Display metrics in a card grid
-    htmlBuilder.AppendLine("<div class='card-body'>");
-    htmlBuilder.AppendLine("<div class='row'>");
-    
-    // Current Price
-    htmlBuilder.AppendLine("<div class='col-md-4 col-sm-6 mb-3'>");
-    htmlBuilder.AppendLine("<div class='card h-100 border-dark'>");
-    htmlBuilder.AppendLine("<div class='card-header bg-dark text-white text-center'>Текущая цена</div>");
-    htmlBuilder.AppendLine("<div class='card-body text-center'>");
-    htmlBuilder.AppendLine($"<h3 class='mb-0'>{currentPrice:F2}</h3>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    
-    // Max Pain
-    string maxPainRelationClass = currentPrice > maxPainStrike ? "text-danger" : (currentPrice < maxPainStrike ? "text-success" : "text-dark");
-    string maxPainRelationText = currentPrice > maxPainStrike ? "выше" : (currentPrice < maxPainStrike ? "ниже" : "равна");
-    
-    htmlBuilder.AppendLine("<div class='col-md-4 col-sm-6 mb-3'>");
-    htmlBuilder.AppendLine("<div class='card h-100 border-primary'>");
-    htmlBuilder.AppendLine("<div class='card-header bg-primary text-white text-center'>Max Pain</div>");
-    htmlBuilder.AppendLine("<div class='card-body text-center'>");
-    htmlBuilder.AppendLine($"<h3 class='mb-0'>{maxPainStrike:F2}</h3>");
-    htmlBuilder.AppendLine($"<small class='{maxPainRelationClass}'>Текущая цена {maxPainRelationText}</small>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    
-    // Call/Put Ratio
-    htmlBuilder.AppendLine("<div class='col-md-4 col-sm-6 mb-3'>");
-    htmlBuilder.AppendLine("<div class='card h-100 border-info'>");
-    htmlBuilder.AppendLine("<div class='card-header bg-info text-white text-center'>Call/Put Ratio</div>");
-    htmlBuilder.AppendLine("<div class='card-body text-center'>");
-    htmlBuilder.AppendLine($"<h3 class='mb-0'>{callPutRatio:F2}</h3>");
-    htmlBuilder.AppendLine($"<span class='badge {sentimentClass}'>{sentimentText}</span>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    
-    // Centers of Gravity - Call
-    htmlBuilder.AppendLine("<div class='col-md-4 col-sm-6 mb-3'>");
-    htmlBuilder.AppendLine("<div class='card h-100 border-primary'>");
-    htmlBuilder.AppendLine("<div class='card-header bg-primary text-white text-center'>Центр тяжести Call</div>");
-    htmlBuilder.AppendLine("<div class='card-body text-center'>");
-    htmlBuilder.AppendLine($"<h3 class='mb-0'>{callCenter:F2}</h3>");
-    string callCenterRelation = callCenter > currentPrice ? "выше текущей цены" : "ниже текущей цены";
-    string callCenterClass = callCenter > currentPrice ? "text-success" : "text-danger";
-    htmlBuilder.AppendLine($"<small class='{callCenterClass}'>{callCenterRelation}</small>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    
-    // Centers of Gravity - Put
-    htmlBuilder.AppendLine("<div class='col-md-4 col-sm-6 mb-3'>");
-    htmlBuilder.AppendLine("<div class='card h-100 border-danger'>");
-    htmlBuilder.AppendLine("<div class='card-header bg-danger text-white text-center'>Центр тяжести Put</div>");
-    htmlBuilder.AppendLine("<div class='card-body text-center'>");
-    htmlBuilder.AppendLine($"<h3 class='mb-0'>{putCenter:F2}</h3>");
-    string putCenterRelation = putCenter > currentPrice ? "выше текущей цены" : "ниже текущей цены";
-    string putCenterClass = putCenter > currentPrice ? "text-success" : "text-danger";
-    htmlBuilder.AppendLine($"<small class='{putCenterClass}'>{putCenterRelation}</small>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    
-    // Equilibrium Level
-    htmlBuilder.AppendLine("<div class='col-md-4 col-sm-6 mb-3'>");
-    htmlBuilder.AppendLine("<div class='card h-100 border-success'>");
-    htmlBuilder.AppendLine("<div class='card-header bg-success text-white text-center'>Уровень равновесия</div>");
-    htmlBuilder.AppendLine("<div class='card-body text-center'>");
-    htmlBuilder.AppendLine($"<h3 class='mb-0'>{equilibriumLevel:F2}</h3>");
-    string equilibriumRelation = equilibriumLevel > currentPrice ? "выше текущей цены" : "ниже текущей цены";
-    string equilibriumClass = equilibriumLevel > currentPrice ? "text-success" : "text-danger";
-    htmlBuilder.AppendLine($"<small class='{equilibriumClass}'>{equilibriumRelation}</small>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    
-    htmlBuilder.AppendLine("</div>"); // Close row
-    htmlBuilder.AppendLine("</div>"); // Close card-body
-    htmlBuilder.AppendLine("</div>"); // Close card
-    
-    // Финальный прогноз
-    htmlBuilder.AppendLine("<div class='card mb-4'>");
-    htmlBuilder.AppendLine("<div class='card-header bg-dark text-white'>");
-    htmlBuilder.AppendLine("<h5 class='mb-0'>Прогноз движения цены</h5>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("<div class='card-body'>");
-    
-    if (currentPrice < maxPainStrike && callPutRatio > 1.2 && callCenter > putCenter)
-    {
-        htmlBuilder.AppendLine("<div class='alert alert-success'>");
-        htmlBuilder.AppendLine("<h4 class='alert-heading'><i class='bi bi-graph-up-arrow me-2'></i>Бычий сценарий</h4>");
-        htmlBuilder.AppendLine("<hr>");
-        htmlBuilder.AppendLine($"<p>Высокая вероятность движения к уровню <strong>{maxPainStrike}</strong> с потенциалом дальнейшего роста к <strong>{callCenter:F2}</strong>.</p>");
-        
-        if (resistanceLevels.Any())
-        {
-            htmlBuilder.AppendLine("<p><strong>Ключевые уровни сопротивления:</strong> " + 
-                                  string.Join(", ", resistanceLevels.Select(l => l.Strike)) + "</p>");
-        }
-        
+        // Секция ключевых уровней
+        htmlBuilder.AppendLine("<div class='card mb-3'>");
+        htmlBuilder.AppendLine("<div class='card-header bg-light'>");
+        htmlBuilder.AppendLine("<h5 class='mb-0'>Ключевые уровни ценового движения</h5>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("<div class='card-body'>");
+
+        htmlBuilder.AppendLine("<div class='row'>");
+
+        // Уровни поддержки
+        htmlBuilder.AppendLine("<div class='col-md-6 mb-3'>");
+        htmlBuilder.AppendLine("<div class='card h-100'>");
+        htmlBuilder.AppendLine("<div class='card-header'>");
+        htmlBuilder.AppendLine("<h6 class='mb-0'><i class='bi bi-arrow-down me-2'></i>Уровни поддержки</h6>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("<div class='card-body'>");
+
         if (supportLevels.Any())
         {
-            htmlBuilder.AppendLine("<p><strong>Ближайшая поддержка:</strong> " + 
-                                  supportLevels.OrderByDescending(l => l.Strike).First().Strike + "</p>");
+            htmlBuilder.AppendLine("<div class='table-responsive'>");
+            htmlBuilder.AppendLine("<table class='table table-bordered'>");
+            htmlBuilder.AppendLine("<thead class='table-light'>");
+            htmlBuilder.AppendLine("<tr>");
+            htmlBuilder.AppendLine("<th>Страйк</th>");
+            htmlBuilder.AppendLine("<th>Put OI</th>");
+            htmlBuilder.AppendLine("<th>Call OI</th>");
+            htmlBuilder.AppendLine("<th>Отношение</th>");
+            htmlBuilder.AppendLine("</tr>");
+            htmlBuilder.AppendLine("</thead>");
+            htmlBuilder.AppendLine("<tbody>");
+
+            foreach (OptionData level in supportLevels.OrderBy(d => d.Strike))
+            {
+                double ratio = level.PutOi / level.CallOi;
+                htmlBuilder.AppendLine("<tr>");
+                htmlBuilder.AppendLine($"<td><strong>{level.Strike}</strong></td>");
+                htmlBuilder.AppendLine($"<td>{level.PutOi}</td>");
+                htmlBuilder.AppendLine($"<td>{level.CallOi}</td>");
+                htmlBuilder.AppendLine($"<td>{ratio:F2}x</td>");
+                htmlBuilder.AppendLine("</tr>");
+            }
+
+            htmlBuilder.AppendLine("</tbody>");
+            htmlBuilder.AppendLine("</table>");
+            htmlBuilder.AppendLine("</div>");
         }
         else
         {
-            htmlBuilder.AppendLine("<p><strong>Ближайшая поддержка:</strong> не выявлена</p>");
+            htmlBuilder.AppendLine("<div class='alert alert-secondary'>");
+            htmlBuilder.AppendLine("<i class='bi bi-info-circle me-2'></i>Ключевые уровни поддержки не выявлены.");
+            htmlBuilder.AppendLine("</div>");
         }
-        
+
+        htmlBuilder.AppendLine("</div>"); // Close card-body
+        htmlBuilder.AppendLine("</div>"); // Close card
+        htmlBuilder.AppendLine("</div>"); // Close col
+
+        // Уровни сопротивления
+        htmlBuilder.AppendLine("<div class='col-md-6 mb-3'>");
+        htmlBuilder.AppendLine("<div class='card h-100'>");
+        htmlBuilder.AppendLine("<div class='card-header'>");
+        htmlBuilder.AppendLine("<h6 class='mb-0'><i class='bi bi-arrow-up me-2'></i>Уровни сопротивления</h6>");
         htmlBuilder.AppendLine("</div>");
-    }
-    else if (currentPrice > maxPainStrike && callPutRatio < 0.8 && callCenter < putCenter)
-    {
-        htmlBuilder.AppendLine("<div class='alert alert-danger'>");
-        htmlBuilder.AppendLine("<h4 class='alert-heading'><i class='bi bi-graph-down-arrow me-2'></i>Медвежий сценарий</h4>");
-        htmlBuilder.AppendLine("<hr>");
-        htmlBuilder.AppendLine($"<p>Высокая вероятность движения к уровню <strong>{maxPainStrike}</strong> с потенциалом дальнейшего снижения к <strong>{putCenter:F2}</strong>.</p>");
-        
-        if (supportLevels.Any())
-        {
-            htmlBuilder.AppendLine("<p><strong>Ключевые уровни поддержки:</strong> " + 
-                                  string.Join(", ", supportLevels.Select(l => l.Strike)) + "</p>");
-        }
-        
+        htmlBuilder.AppendLine("<div class='card-body'>");
+
         if (resistanceLevels.Any())
         {
-            htmlBuilder.AppendLine("<p><strong>Ближайшее сопротивление:</strong> " + 
-                                  resistanceLevels.OrderBy(l => l.Strike).First().Strike + "</p>");
+            htmlBuilder.AppendLine("<div class='table-responsive'>");
+            htmlBuilder.AppendLine("<table class='table table-bordered'>");
+            htmlBuilder.AppendLine("<thead class='table-light'>");
+            htmlBuilder.AppendLine("<tr>");
+            htmlBuilder.AppendLine("<th>Страйк</th>");
+            htmlBuilder.AppendLine("<th>Call OI</th>");
+            htmlBuilder.AppendLine("<th>Put OI</th>");
+            htmlBuilder.AppendLine("<th>Отношение</th>");
+            htmlBuilder.AppendLine("</tr>");
+            htmlBuilder.AppendLine("</thead>");
+            htmlBuilder.AppendLine("<tbody>");
+
+            foreach (OptionData level in resistanceLevels)
+            {
+                double ratio = level.CallOi / level.PutOi;
+                htmlBuilder.AppendLine("<tr>");
+                htmlBuilder.AppendLine($"<td><strong>{level.Strike}</strong></td>");
+                htmlBuilder.AppendLine($"<td>{level.CallOi}</td>");
+                htmlBuilder.AppendLine($"<td>{level.PutOi}</td>");
+                htmlBuilder.AppendLine($"<td>{ratio:F2}x</td>");
+                htmlBuilder.AppendLine("</tr>");
+            }
+
+            htmlBuilder.AppendLine("</tbody>");
+            htmlBuilder.AppendLine("</table>");
+            htmlBuilder.AppendLine("</div>");
         }
         else
         {
-            htmlBuilder.AppendLine("<p><strong>Ближайшее сопротивление:</strong> не выявлено</p>");
+            htmlBuilder.AppendLine("<div class='alert alert-secondary'>");
+            htmlBuilder.AppendLine("<i class='bi bi-info-circle me-2'></i>Ключевые уровни сопротивления не выявлены.");
+            htmlBuilder.AppendLine("</div>");
         }
-        
-        htmlBuilder.AppendLine("</div>");
-    }
-    else if (Math.Abs(currentPrice - maxPainStrike) / maxPainStrike <= 0.01)
-    {
-        htmlBuilder.AppendLine("<div class='alert alert-secondary'>");
-        htmlBuilder.AppendLine("<h4 class='alert-heading'><i class='bi bi-arrow-left-right me-2'></i>Нейтральный сценарий</h4>");
-        htmlBuilder.AppendLine("<hr>");
-        htmlBuilder.AppendLine("<p>Цена близка к уровню Max Pain, возможно боковое движение в диапазоне " +
-                              $"<strong>{Math.Min(putCenter, callCenter):F2} - {Math.Max(putCenter, callCenter):F2}</strong>.</p>");
-        htmlBuilder.AppendLine("</div>");
-    }
-    else
-    {
-        htmlBuilder.AppendLine("<div class='alert alert-warning'>");
-        htmlBuilder.AppendLine("<h4 class='alert-heading'><i class='bi bi-question-circle me-2'></i>Смешанный сценарий</h4>");
-        htmlBuilder.AppendLine("<hr>");
-        htmlBuilder.AppendLine($"<p>Возможно движение к уровню Max Pain <strong>{maxPainStrike}</strong> с последующим определением направления.</p>");
-        
-        if (callPutRatio > 1.2)
-        {
-            htmlBuilder.AppendLine("<p><i class='bi bi-arrow-up-circle me-2'></i>Преобладание Call опционов указывает на потенциал роста после достижения уровня Max Pain.</p>");
-        }
-        else if (callPutRatio < 0.8)
-        {
-            htmlBuilder.AppendLine("<p><i class='bi bi-arrow-down-circle me-2'></i>Преобладание Put опционов указывает на потенциал снижения после достижения уровня Max Pain.</p>");
-        }
-        
-        htmlBuilder.AppendLine("</div>");
-    }
-    
-    // Price Movement Visualization
-    htmlBuilder.AppendLine("<h5 class='mt-4 mb-3'>Визуализация ключевых уровней</h5>");
-    htmlBuilder.AppendLine("<div class='position-relative py-5 mb-4 px-4' style='background-color: #f8f9fa; border-radius: 4px;'>");
-    
-    // Find min and max for visualization scale
-    double minLevel = Math.Min(Math.Min(currentPrice, maxPainStrike), Math.Min(callCenter, putCenter)) * 0.95;
-    double maxLevel = Math.Max(Math.Max(currentPrice, maxPainStrike), Math.Max(callCenter, putCenter)) * 1.05;
-    
-    // If we have support or resistance levels, include them in scale calculation
-    if (supportLevels.Any())
-    {
-        minLevel = Math.Min(minLevel, supportLevels.Min(l => l.Strike) * 0.95);
-    }
-    
-    if (resistanceLevels.Any())
-    {
-        maxLevel = Math.Max(maxLevel, resistanceLevels.Max(l => l.Strike) * 1.05);
-    }
-    
-    double range = maxLevel - minLevel;
-    
-    // Scale line
-    htmlBuilder.AppendLine("<div class='position-absolute w-100 start-0' style='height: 4px; background-color: #dee2e6; top: 50%; transform: translateY(-50%);'></div>");
-    
-    // Current Price marker
-    double currentPricePos = (currentPrice - minLevel) / range * 100;
-    htmlBuilder.AppendLine($"<div class='position-absolute' style='left: {currentPricePos}%; top: 50%; transform: translate(-50%, -50%);'>");
-    htmlBuilder.AppendLine("<div class='bg-warning text-dark px-2 py-1 rounded' style='white-space: nowrap;'>");
-    htmlBuilder.AppendLine($"<small><strong>Текущая: {currentPrice:F2}</strong></small>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    
-    // Max Pain marker
-    double maxPainPos = (maxPainStrike - minLevel) / range * 100;
-    htmlBuilder.AppendLine($"<div class='position-absolute' style='left: {maxPainPos}%; top: 10px; transform: translateX(-50%);'>");
-    htmlBuilder.AppendLine("<div class='bg-primary text-white px-2 py-1 rounded' style='white-space: nowrap;'>");
-    htmlBuilder.AppendLine($"<small><strong>Max Pain: {maxPainStrike:F2}</strong></small>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    
-    // Call Center marker
-    double callCenterPos = (callCenter - minLevel) / range * 100;
-    htmlBuilder.AppendLine($"<div class='position-absolute' style='left: {callCenterPos}%; bottom: 10px; transform: translateX(-50%);'>");
-    htmlBuilder.AppendLine("<div class='bg-info text-white px-2 py-1 rounded' style='white-space: nowrap;'>");
-    htmlBuilder.AppendLine($"<small><strong>Call ЦТ: {callCenter:F2}</strong></small>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    
-    // Put Center marker
-    double putCenterPos = (putCenter - minLevel) / range * 100;
-    htmlBuilder.AppendLine($"<div class='position-absolute' style='left: {putCenterPos}%; bottom: 10px; transform: translateX(-50%);'>");
-    htmlBuilder.AppendLine("<div class='bg-danger text-white px-2 py-1 rounded' style='white-space: nowrap;'>");
-    htmlBuilder.AppendLine($"<small><strong>Put ЦТ: {putCenter:F2}</strong></small>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    
-    // Support Levels markers (if any)
-    foreach (var level in supportLevels.OrderBy(l => l.Strike).Take(2))
-    {
-        double levelPos = (level.Strike - minLevel) / range * 100;
-        htmlBuilder.AppendLine($"<div class='position-absolute' style='left: {levelPos}%; top: 10px; transform: translateX(-50%);'>");
-        htmlBuilder.AppendLine("<div class='bg-success text-white px-2 py-1 rounded' style='white-space: nowrap;'>");
-        htmlBuilder.AppendLine($"<small><strong>Поддержка: {level.Strike:F2}</strong></small>");
-        htmlBuilder.AppendLine("</div>");
-        htmlBuilder.AppendLine("</div>");
-    }
-    
-    // Resistance Levels markers (if any)
-    foreach (var level in resistanceLevels.OrderBy(l => l.Strike).Take(2))
-    {
-        double levelPos = (level.Strike - minLevel) / range * 100;
-        htmlBuilder.AppendLine($"<div class='position-absolute' style='left: {levelPos}%; top: 10px; transform: translateX(-50%);'>");
-        htmlBuilder.AppendLine("<div class='bg-danger text-white px-2 py-1 rounded' style='white-space: nowrap;'>");
-        htmlBuilder.AppendLine($"<small><strong>Сопротивление: {level.Strike:F2}</strong></small>");
-        htmlBuilder.AppendLine("</div>");
-        htmlBuilder.AppendLine("</div>");
-    }
-    
-    htmlBuilder.AppendLine("</div>"); // Close visualization div
-    
-    // Explanation section
-    htmlBuilder.AppendLine("<div class='card mt-3 bg-light'>");
-    htmlBuilder.AppendLine("<div class='card-body'>");
-    htmlBuilder.AppendLine("<h5 class='card-title'>О прогнозе движения цены</h5>");
-    htmlBuilder.AppendLine("<p class='card-text'>Прогноз основан на комплексном анализе опционных данных, включая:</p>");
-    htmlBuilder.AppendLine("<ul>");
-    htmlBuilder.AppendLine("<li><strong>Max Pain:</strong> Цена, при которой совокупные убытки держателей опционов максимальны. Часто наблюдается притяжение цены к этому уровню ближе к экспирации.</li>");
-    htmlBuilder.AppendLine("<li><strong>Центры тяжести:</strong> Средневзвешенные уровни страйков для Call и Put опционов. Показывают ожидания рынка.</li>");
-    htmlBuilder.AppendLine("<li><strong>Call/Put Ratio:</strong> Соотношение объемов Call и Put опционов. Индикатор настроений участников рынка.</li>");
-    htmlBuilder.AppendLine("<li><strong>Уровни поддержки и сопротивления:</strong> Определены на основе концентрации опционных позиций.</li>");
-    htmlBuilder.AppendLine("</ul>");
-    htmlBuilder.AppendLine("</div>");
-    htmlBuilder.AppendLine("</div>");
-    
-    htmlBuilder.AppendLine("</div>"); // Close card-body
-    htmlBuilder.AppendLine("</div>"); // Close card
-    
-    htmlBuilder.AppendLine("</div>"); // Close main div
-    htmlBuilder.AppendLine("</article>"); // Close article
-    
-    return htmlBuilder.ToString();
-}
 
+        htmlBuilder.AppendLine("</div>"); // Close card-body
+        htmlBuilder.AppendLine("</div>"); // Close card
+        htmlBuilder.AppendLine("</div>"); // Close col
 
+        htmlBuilder.AppendLine("</div>"); // Close row
+
+        // Общий открытый интерес
+        double totalOi = data.Sum(d => d.CallOi + d.PutOi);
+        htmlBuilder.AppendLine("<div class='alert alert-light'>");
+        htmlBuilder.AppendLine(
+            $"<i class='bi bi-info-circle me-2'></i>Общий открытый интерес: <strong>{totalOi:N0}</strong> контрактов");
+        htmlBuilder.AppendLine("</div>");
+
+        htmlBuilder.AppendLine("</div>"); // Close card-body
+        htmlBuilder.AppendLine("</div>"); // Close card
+
+        // Секция комплексного анализа
+        htmlBuilder.AppendLine("<div class='card mb-3'>");
+        htmlBuilder.AppendLine("<div class='card-header bg-light'>");
+        htmlBuilder.AppendLine("<h5 class='mb-0'>Комплексный анализ и прогноз</h5>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("<div class='card-body'>");
+
+        // Центры тяжести
+        double callCenter = data.Sum(d => d.Strike * d.CallOi) / data.Sum(d => d.CallOi);
+        double putCenter = data.Sum(d => d.Strike * d.PutOi) / data.Sum(d => d.PutOi);
+
+        // Max Pain
+        List<PainResult> painResults = new List<PainResult>();
+        foreach (OptionData targetOption in data)
+        {
+            double targetStrike = targetOption.Strike;
+            double callLosses = 0;
+            double putLosses = 0;
+
+            foreach (OptionData option in data)
+            {
+                callLosses += option.CallOi * Math.Max(0, targetStrike - option.Strike);
+                putLosses += option.PutOi * Math.Max(0, option.Strike - targetStrike);
+            }
+
+            painResults.Add(new PainResult
+            {
+                Strike = targetStrike,
+                CallLosses = callLosses,
+                PutLosses = putLosses,
+                TotalLosses = callLosses + putLosses
+            });
+        }
+
+        double maxPainStrike = painResults.OrderBy(p => p.TotalLosses).First().Strike;
+
+        // Call/Put Ratio
+        double callPutRatio = data.Sum(d => d.CallOi) / data.Sum(d => d.PutOi);
+
+        // Информационные карточки
+        htmlBuilder.AppendLine("<div class='row'>");
+
+        // Max Pain
+        htmlBuilder.AppendLine("<div class='col-md-3 col-sm-6 mb-3'>");
+        htmlBuilder.AppendLine("<div class='card h-100'>");
+        htmlBuilder.AppendLine("<div class='card-body text-center'>");
+        htmlBuilder.AppendLine("<h6 class='text-muted'>Уровень Max Pain</h6>");
+        htmlBuilder.AppendLine($"<h4 class='mb-0'>{maxPainStrike}</h4>");
+        string maxPainRelation = currentPrice > maxPainStrike ? "выше" : "ниже";
+        htmlBuilder.AppendLine($"<small class='text-muted'>Текущая цена {maxPainRelation}</small>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+
+        // Call/Put Ratio
+        htmlBuilder.AppendLine("<div class='col-md-3 col-sm-6 mb-3'>");
+        htmlBuilder.AppendLine("<div class='card h-100'>");
+        htmlBuilder.AppendLine("<div class='card-body text-center'>");
+        htmlBuilder.AppendLine("<h6 class='text-muted'>Соотношение Call/Put</h6>");
+        htmlBuilder.AppendLine($"<h4 class='mb-0'>{callPutRatio:F2}</h4>");
+        string sentiment = callPutRatio > 1.2 ? "Бычий" : callPutRatio < 0.8 ? "Медвежий" : "Нейтральный";
+        htmlBuilder.AppendLine($"<small class='text-muted'>{sentiment} настрой</small>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+
+        // Центр тяжести Call
+        htmlBuilder.AppendLine("<div class='col-md-3 col-sm-6 mb-3'>");
+        htmlBuilder.AppendLine("<div class='card h-100'>");
+        htmlBuilder.AppendLine("<div class='card-body text-center'>");
+        htmlBuilder.AppendLine("<h6 class='text-muted'>Центр тяжести Call</h6>");
+        htmlBuilder.AppendLine($"<h4 class='mb-0'>{callCenter:F2}</h4>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+
+        // Центр тяжести Put
+        htmlBuilder.AppendLine("<div class='col-md-3 col-sm-6 mb-3'>");
+        htmlBuilder.AppendLine("<div class='card h-100'>");
+        htmlBuilder.AppendLine("<div class='card-body text-center'>");
+        htmlBuilder.AppendLine("<h6 class='text-muted'>Центр тяжести Put</h6>");
+        htmlBuilder.AppendLine($"<h4 class='mb-0'>{putCenter:F2}</h4>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("</div>");
+
+        htmlBuilder.AppendLine("</div>"); // Close row
+
+        // Уровень равновесия
+        double equilibrium = (callCenter + putCenter) / 2;
+        htmlBuilder.AppendLine("<div class='alert alert-light mt-3'>");
+        htmlBuilder.AppendLine(
+            $"<i class='bi bi-info-circle me-2'></i>Уровень равновесия: <strong>{equilibrium:F2}</strong>");
+        htmlBuilder.AppendLine("</div>");
+
+        htmlBuilder.AppendLine("</div>"); // Close card-body
+        htmlBuilder.AppendLine("</div>"); // Close card
+
+        // Секция прогноза
+        htmlBuilder.AppendLine("<div class='card mb-3'>");
+        htmlBuilder.AppendLine("<div class='card-header bg-light'>");
+        htmlBuilder.AppendLine("<h5 class='mb-0'>Прогноз движения цены</h5>");
+        htmlBuilder.AppendLine("</div>");
+        htmlBuilder.AppendLine("<div class='card-body'>");
+
+        // Финальный прогноз
+        if (currentPrice < maxPainStrike && callPutRatio > 1.2 && callCenter > putCenter)
+        {
+            htmlBuilder.AppendLine("<div class='alert alert-light'>");
+            htmlBuilder.AppendLine("<h5><i class='bi bi-arrow-up-circle me-2'></i>Бычий сценарий</h5>");
+            htmlBuilder.AppendLine(
+                $"<p>Высокая вероятность движения к уровню <strong>{maxPainStrike}</strong> с потенциалом дальнейшего роста к <strong>{callCenter:F2}</strong>.</p>");
+
+            // Ключевые уровни
+            if (resistanceLevels.Any())
+            {
+                htmlBuilder.AppendLine("<div class='mt-3'>");
+                htmlBuilder.AppendLine("<p><strong>Ключевые уровни сопротивления:</strong></p>");
+                htmlBuilder.AppendLine("<ul class='mb-0'>");
+                foreach (var level in resistanceLevels)
+                {
+                    htmlBuilder.AppendLine($"<li>{level.Strike} (Call OI: {level.CallOi}, Put OI: {level.PutOi})</li>");
+                }
+
+                htmlBuilder.AppendLine("</ul>");
+                htmlBuilder.AppendLine("</div>");
+            }
+
+            // Ближайшая поддержка
+            if (supportLevels.Any())
+            {
+                var nearestSupport = supportLevels.OrderByDescending(l => l.Strike).First();
+                htmlBuilder.AppendLine("<div class='mt-3'>");
+                htmlBuilder.AppendLine("<p><strong>Ближайшая поддержка:</strong></p>");
+                htmlBuilder.AppendLine(
+                    $"<p class='mb-0'>{nearestSupport.Strike} (Put OI: {nearestSupport.PutOi}, Call OI: {nearestSupport.CallOi})</p>");
+                htmlBuilder.AppendLine("</div>");
+            }
+
+            htmlBuilder.AppendLine("</div>");
+        }
+        else if (currentPrice > maxPainStrike && callPutRatio < 0.8 && callCenter < putCenter)
+        {
+            htmlBuilder.AppendLine("<div class='alert alert-light'>");
+            htmlBuilder.AppendLine("<h5><i class='bi bi-arrow-down-circle me-2'></i>Медвежий сценарий</h5>");
+            htmlBuilder.AppendLine(
+                $"<p>Высокая вероятность движения к уровню <strong>{maxPainStrike}</strong> с потенциалом дальнейшего снижения к <strong>{putCenter:F2}</strong>.</p>");
+
+            // Ключевые уровни поддержки
+            if (supportLevels.Any())
+            {
+                htmlBuilder.AppendLine("<div class='mt-3'>");
+                htmlBuilder.AppendLine("<p><strong>Ключевые уровни поддержки:</strong></p>");
+                htmlBuilder.AppendLine("<ul class='mb-0'>");
+                foreach (var level in supportLevels)
+                {
+                    htmlBuilder.AppendLine($"<li>{level.Strike} (Put OI: {level.PutOi}, Call OI: {level.CallOi})</li>");
+                }
+
+                htmlBuilder.AppendLine("</ul>");
+                htmlBuilder.AppendLine("</div>");
+            }
+
+            // Ближайшее сопротивление
+            if (resistanceLevels.Any())
+            {
+                var nearestResistance = resistanceLevels.OrderBy(l => l.Strike).First();
+                htmlBuilder.AppendLine("<div class='mt-3'>");
+                htmlBuilder.AppendLine("<p><strong>Ближайшее сопротивление:</strong></p>");
+                htmlBuilder.AppendLine(
+                    $"<p class='mb-0'>{nearestResistance.Strike} (Call OI: {nearestResistance.CallOi}, Put OI: {nearestResistance.PutOi})</p>");
+                htmlBuilder.AppendLine("</div>");
+            }
+
+            htmlBuilder.AppendLine("</div>");
+        }
+        else if (Math.Abs(currentPrice - maxPainStrike) / maxPainStrike <= 0.01)
+        {
+            htmlBuilder.AppendLine("<div class='alert alert-light'>");
+            htmlBuilder.AppendLine("<h5><i class='bi bi-arrow-left-right me-2'></i>Нейтральный сценарий</h5>");
+            htmlBuilder.AppendLine(
+                $"<p>Цена близка к уровню Max Pain, возможно боковое движение в диапазоне <strong>{Math.Min(putCenter, callCenter):F2} - {Math.Max(putCenter, callCenter):F2}</strong>.</p>");
+            htmlBuilder.AppendLine("</div>");
+        }
+        else
+        {
+            htmlBuilder.AppendLine("<div class='alert alert-light'>");
+            htmlBuilder.AppendLine("<h5><i class='bi bi-question-circle me-2'></i>Смешанный сценарий</h5>");
+            htmlBuilder.AppendLine(
+                $"<p>Возможно движение к уровню Max Pain <strong>{maxPainStrike}</strong> с последующим определением направления.</p>");
+
+            if (callPutRatio > 1.2)
+            {
+                htmlBuilder.AppendLine(
+                    "<p>Преобладание Call опционов указывает на потенциал роста после достижения уровня Max Pain.</p>");
+            }
+            else if (callPutRatio < 0.8)
+            {
+                htmlBuilder.AppendLine(
+                    "<p>Преобладание Put опционов указывает на потенциал снижения после достижения уровня Max Pain.</p>");
+            }
+
+            htmlBuilder.AppendLine("</div>");
+        }
+
+        htmlBuilder.AppendLine("</div>"); // Close card-body
+        htmlBuilder.AppendLine("</div>"); // Close card
+
+        htmlBuilder.AppendLine("</div>"); // Close main div
+        htmlBuilder.AppendLine("</article>"); // Close article
+
+        return htmlBuilder.ToString();
+    }
 
     #region Private
 
@@ -2283,7 +2218,7 @@ public class OptionsAnalysisHtmlBuilder : IOptionsAnalysisHtmlBuilder
 
         return equilibriumPrice;
     }
-    
+
     /// <summary>
     /// Рассчитывает PnL продавца Call опционов при заданной цене базового актива
     /// </summary>
