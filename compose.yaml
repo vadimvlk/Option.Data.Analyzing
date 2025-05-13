@@ -30,6 +30,8 @@ services:
       - share-network
     ports:
       - "5005:80"
+    environment:
+      - ASPNETCORE_URLS=http://+:80
     depends_on:
       - postgres
 networks:
