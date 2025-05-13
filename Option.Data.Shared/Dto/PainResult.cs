@@ -1,4 +1,4 @@
-﻿namespace Option.Data.Analyzing.Models;
+﻿namespace Option.Data.Shared.Dto;
 
 public record PainResult
 {

@@ -1,6 +1,6 @@
 ﻿using System.Text;
 using Option.Data.Analyzing;
-using Option.Data.Analyzing.Models;
+using Option.Data.Shared.Dto;
 
 // Регистрируем провайдер кодировок для работы с Windows-1251.
 EncodingProvider provider = CodePagesEncodingProvider.Instance;

@@ -7,7 +7,7 @@
 
 <div class="container">
     <h1>Deribit Options Data</h1>
-    
+
     <form method="post">
         <div class="grid">
             <div>
@@ -32,7 +32,7 @@
                 </select>
             </div>
         </div>
-        
+
         <div>
             <label for="datetime">Date & Time</label>
             <select id="datetime" name="ViewModel.SelectedDateTime" required>
@@ -59,8 +59,59 @@
 
         <button type="submit" asp-page-handler="LoadData" class="contrast">Load Data</button>
     </form>
+
+    @if (Model.ViewModel.OptionData?.Any() == true)
+    {
+        <div class="option-data-container">
+            <h2>Options Data for @(Model.ViewModel.SelectedCurrencyId == 1 ? "BTC" : "ETH") - @Model.ViewModel.SelectedExpiration 
+                Underlying Price: @Model.ViewModel.UnderlyingPrice.ToString("N2")
+                </h2>
+            <table>
+                <thead>
+                <tr>
+                    <th>Call Gamma</th>
+                    <th>Call Delta</th>
+                    <th>Call Price</th>
+                    <th>Call OI</th>
+                    <th>Strike</th>
+                    <th>IV</th>
+                    <th>Put OI</th>
+                    <th>Put Price</th>
+                    <th>Put Delta</th>
+                    <th>Put Gamma</th>
+                </tr>
+                </thead>
+                <tbody>
+                @foreach (var data in Model.ViewModel.OptionData)
+                {
+                    <tr>
+                        <td>@data.CallGamma.ToString("F6")</td>
+                        <td>@data.CallDelta.ToString("F2")</td>
+                        <td>@data.CallPrice.ToString("F2")</td>
+                        <td>@data.CallOi.ToString("N0")</td>
+                        <td>@data.Strike</td>
+                        <td>@data.Iv.ToString("F2")</td>
+                        <td>@data.PutOi.ToString("N0")</td>
+                        <td>@data.PutPrice.ToString("F2")</td>
+                        <td>@data.PutDelta.ToString("F2")</td>
+                        <td>@data.PutGamma.ToString("F6")</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+    else
+    {
+        <div class="option-data-container">
+            <h2>Options Data</h2>
+            <p>No data available</p>
+        </div>
+    }
 </div>
 
-<script>
+@section Scripts{
+    <script>
 
-</script>
+    </script>
+}

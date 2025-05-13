@@ -6,6 +6,8 @@ using Option.Data.Scheduler.Jobs;
 
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
+builder.RegisterLog();
+
 builder.Services.AddAsyncInitializer<MappingInitializer>();
 
 builder.RegisterDeribit();

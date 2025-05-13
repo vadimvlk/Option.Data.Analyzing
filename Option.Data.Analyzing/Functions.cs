@@ -1,6 +1,6 @@
-﻿using System.Globalization;
-using System.Text;
-using Option.Data.Analyzing.Models;
+﻿using System.Text;
+using System.Globalization;
+using Option.Data.Shared.Dto;
 
 namespace Option.Data.Analyzing;
 
