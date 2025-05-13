@@ -22,7 +22,16 @@ services:
       - /var/deribit/appsettings.json:/app/appsettings.json
     networks:
       - share-network
-
+  web:
+    container_name: web
+    image: vadimvlk/private:web
+    restart: always
+    networks:
+      - share-network
+    ports:
+      - "5005:80"
+    depends_on:
+      - postgres
 networks:
   share-network:
     driver: bridge
