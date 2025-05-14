@@ -25,6 +25,14 @@ builder.Services.AddQuartz(q =>
         .ForJob(jobKey)
         .WithIdentity(nameof(DeribitJob))
         .WithCronSchedule("0 0 0/3 * * ?")); // Run every 3 hours starting at 00:00 UTC
+    
+    JobKey jobCleanupKey = new JobKey("Cleanup");
+    q.AddJob<CleanupJob>(opts => opts.WithIdentity(jobCleanupKey));
+
+    q.AddTrigger(opts => opts
+        .ForJob(jobCleanupKey)
+        .WithIdentity(nameof(CleanupJob))
+        .WithCronSchedule("0 0 5 * * ?")); // Runs daily at 05:00 UTC
 });
 
 builder.Services.AddQuartzHostedService(q => q.WaitForJobsToComplete = true);
