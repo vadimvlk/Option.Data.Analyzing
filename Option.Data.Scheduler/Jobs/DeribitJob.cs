@@ -109,7 +109,7 @@ public class DeribitJob : IJob
             deribitData.Gamma = orderBook?.Data?.Greeks?.Gamma ?? 0;
 
             optionDataList.Add(deribitData);
-            await Task.Delay(500);
+            await Task.Delay(350);
         }
 
         return optionDataList;

@@ -9,5 +9,5 @@ internal static class Helpers
         HttpPolicyExtensions
             .HandleTransientHttpError()
             .WaitAndRetryAsync(5, retryAttempt
-                => TimeSpan.FromSeconds(Math.Max(Math.Pow(3, retryAttempt), 90)));
+                => TimeSpan.FromSeconds(Math.Min(Math.Pow(3, retryAttempt), 90)));
 }
