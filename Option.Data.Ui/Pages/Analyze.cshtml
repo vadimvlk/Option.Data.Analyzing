@@ -1,6 +1,5 @@
 ﻿@page
 @model AnalyzeModel
-@using Option.Data.Shared.Poco
 @using Option.Data.Ui.Services
 @inject IOptionsAnalysisHtmlBuilder HtmlBuilder;
 @{
@@ -8,63 +7,11 @@
 }
 
 <div class="container">
-    <h1>Deribit Options Data</h1>
-
-    <form method="post">
-        <div class="grid">
-            <div>
-                <label for="currency">Currency</label>
-                <select id="currency" name="ViewModel.SelectedCurrencyId" required>
-                    <option value="">Select currency</option>
-                    @foreach (CurrencyType currency in Model.ViewModel.Currencies)
-                    {
-                        <option value="@currency.Id">@currency.Name</option>
-                    }
-                </select>
-            </div>
-            
-            <div>
-                <label for="expiration">Expiration</label>
-                <select id="expiration" name="ViewModel.SelectedExpiration" required>
-                    <option value="">Select expiration</option>
-                    @foreach (string exp in Model.ViewModel.Expirations)
-                    {
-                        <option value="@exp">@exp</option>
-                    }
-                </select>
-            </div>
-        </div>
-
-        <div>
-            <label for="datetime">Date & Time</label>
-            <select id="datetime" name="ViewModel.SelectedDateTime" required>
-                <option value="">Select date & time</option>
-                @{
-                    List<DateTimeOffset> orderedDates = Model.ViewModel.AvailableDates.OrderBy(d => d).ToList();
-                    var lastDate = orderedDates.LastOrDefault();
-                }
-                @foreach (var date in orderedDates)
-                {
-                    if (date == lastDate)
-                    {
-                        <option value="@date.ToString("o")" selected>@date.ToString("g")</option>
-                    }
-                    else
-                    {
-                        <option value="@date.ToString("o")">@date.ToString("g")</option>
-                    }
-                }
-            </select>
-            <small>Available range: @orderedDates.Min().ToString("g") to @orderedDates.Max().ToString("g")</small>
-        </div>
-
-
-        <button type="submit" asp-page-handler="LoadData" class="contrast">Load Data</button>
-    </form>
-
+    <h1>Deribit Analyzer</h1>
+    <partial name="_OptionsForm" model="Model" />
     @if (Model.ViewModel.OptionData.Any())
     {
-        <h4>Options Data for @(Model.ViewModel.SelectedCurrencyId == 1 ? "BTC" : "ETH") - @Model.ViewModel.SelectedExpiration 
+        <h4>Options Data for @(Model.ViewModel.SelectedCurrencyId == 1 ? "BTC" : "ETH") - @Model.ViewModel.SelectedExpiration
             Underlying Price: @Model.ViewModel.UnderlyingPrice.ToString("N2")
         </h4>
         <div class="option-analysis-container mt-4">
@@ -76,7 +23,6 @@
             @Html.Raw(HtmlBuilder.CalculateProfitLossHtml(Model.ViewModel.OptionData, Model.ViewModel.UnderlyingPrice))
             @Html.Raw(HtmlBuilder.AnalyzePriceMovementPotentialHtml(Model.ViewModel.OptionData, Model.ViewModel.UnderlyingPrice))
         </div>
-
     }
     else
     {
@@ -89,6 +35,5 @@
 
 @section Scripts{
     <script>
-
     </script>
 }

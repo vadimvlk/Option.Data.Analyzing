@@ -23,6 +23,12 @@ public abstract class BaseOptionPageModel(ApplicationDbContext context, IMemoryC
             ViewModel.Currencies = await GetOrCreateCurrencyTypesAsync();
             ViewModel.Expirations = await GetOrCreateExpirationsAsync();
             ViewModel.AvailableDates = await GetOrCreateAvailableDatesAsync();
+            
+            // Set datetime if not already.
+            if (ViewModel.SelectedDateTime == default && ViewModel.AvailableDates.Count != 0)
+            {
+                ViewModel.SelectedDateTime = ViewModel.AvailableDates.Last();
+            }
         }
         catch (Exception e)
         {
