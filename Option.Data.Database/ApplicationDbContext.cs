@@ -7,7 +7,8 @@ namespace Option.Data.Database;
 // SELECT
 // pg_size_pretty(pg_table_size('"DeribitData"')) AS table_size,
 //     pg_size_pretty(pg_indexes_size('"DeribitData"')) AS indexes_size,
-//     pg_size_pretty(pg_total_relation_size('"DeribitData"')) AS total_size;
+//     pg_size_pretty(pg_total_relation_size('"DeribitData"')) AS total_size,
+//     pg_size_pretty(pg_database_size('OptionData')) AS db_size;
 
 // dotnet ef migrations add Initial --context ApplicationDbContext --project ../Option.Data.Database/ -o "Migrations/ApplicationDb"
 // dotnet ef database update --context ApplicationDbContext  --project ../Option.Data.Database/
