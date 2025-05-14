@@ -1,5 +1,7 @@
 using System.Text;
 using Option.Data.Database;
+using Option.Data.Shared;
+using Option.Data.Shared.Configuration;
 using Option.Data.Ui.Services;
 using Serilog;
 using Serilog.Events;
@@ -22,6 +24,8 @@ builder.Logging.AddSerilog(Log.Logger, true);
 
 //Register PostgresSql.
 builder.Services.RegisterData(builder.Configuration);
+
+builder.AddDeribitClientConfiguration();
 
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IOptionsAnalysisHtmlBuilder, OptionsAnalysisHtmlBuilder>();

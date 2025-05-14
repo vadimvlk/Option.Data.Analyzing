@@ -1,0 +1,63 @@
+﻿@page
+@using Option.Data.Shared.Poco
+@using Option.Data.Ui.Services
+@inject IOptionsAnalysisHtmlBuilder HtmlBuilder;
+@{
+    ViewData["Title"] = "Deribit snapshot";
+}
+
+@model Option.Data.Ui.Pages.SnapshotModel
+
+<div class="container">
+    <h1>Deribit Snapshot</h1>
+    <form method="post">
+        <div class="grid">
+            <div>
+                <label for="currency">Currency</label>
+                <select id="currency" name="ViewModel.SelectedCurrencyId" required>
+                    <option value="">Select currency</option>
+                    @foreach (CurrencyType currency in Model.ViewModel.Currencies)
+                    {
+                        <option value="@currency.Id"selected="@(currency.Id == Model.ViewModel.SelectedCurrencyId)">@currency.Name</option>
+                    }
+                </select>
+            </div>
+
+            <div>
+                <label for="expiration">Expiration</label>
+                <select id="expiration" name="ViewModel.SelectedExpiration" required>
+                    <option value="">Select expiration</option>
+                    @foreach (string exp in Model.ViewModel.Expirations)
+                    {
+                        <option value="@exp" selected="@(exp == Model.ViewModel.SelectedExpiration)">@exp</option>
+                    }
+                </select>
+            </div>
+        </div>
+        <button type="submit" asp-page-handler="LoadData" class="contrast">Load Data</button>
+    </form>
+    
+    @if (Model.ViewModel.OptionData.Any())
+    {
+        <h4>Options Data for @(Model.ViewModel.SelectedCurrencyId == 1 ? "BTC" : "ETH") - @Model.ViewModel.SelectedExpiration
+            Underlying Price: @Model.ViewModel.UnderlyingPrice.ToString("N2")
+        </h4>
+        <div class="option-analysis-container mt-4">
+            @Html.Raw(HtmlBuilder.AnalyzeCentersOfGravityHtml(Model.ViewModel.OptionData, Model.ViewModel.UnderlyingPrice))
+            @Html.Raw(HtmlBuilder.AnalyzeGlobalSellerPositionHtml(Model.ViewModel.OptionData, Model.ViewModel.UnderlyingPrice))
+            @Html.Raw(HtmlBuilder.CalculateCallPutRatioHtml(Model.ViewModel.OptionData))
+        </div>
+    }
+    else
+    {
+        <div class="option-data-container">
+            <h2>Options Data</h2>
+            <p>No data available</p>
+        </div>
+    }
+</div>
+
+@section Scripts{
+    <script>
+    </script>
+}
