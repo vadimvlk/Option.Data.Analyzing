@@ -11,5 +11,5 @@ public class OptionModel : BaseOptionPageModel
 
     public async Task OnGetAsync() => await LoadCommonDataAsync();
 
-    public async Task<IActionResult> OnPostLoadDataAsync() => await LoadFilteredDataAsync();
+    public async Task<IActionResult> OnPostAsync() => await LoadFilteredDataAsync();
 }

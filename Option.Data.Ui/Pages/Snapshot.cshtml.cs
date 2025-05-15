@@ -55,7 +55,7 @@ public class SnapshotModel : PageModel
         return Page();
     }
 
-    public async Task<IActionResult> OnPostLoadDataAsync()
+    public async Task<IActionResult> OnPostAsync()
     {
         if (!ModelState.IsValid)
         {
@@ -111,7 +111,7 @@ public class SnapshotModel : PageModel
     {
         if (filteredData == null || filteredData.Count == 0)
         {
-            ViewModel.OptionData = new List<OptionData>();
+            ViewModel.OptionData = [];
             return;
         }
 
@@ -147,7 +147,7 @@ public class SnapshotModel : PageModel
             .Select(x => x!.Parsed.Strike)
             .ToHashSet();
 
-        ViewModel.UnderlyingPrice = parsedInstruments.Max(x => x.Data.UnderlyingPrice) ?? 0;
+        ViewModel.UnderlyingPrice = parsedInstruments.Max(x => x!.Data.UnderlyingPrice) ?? 0;
 
         ViewModel.OptionData = allStrikes.OrderBy(strike => strike)
             .Select(strike =>

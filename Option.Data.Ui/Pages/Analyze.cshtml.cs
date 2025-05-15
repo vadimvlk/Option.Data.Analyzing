@@ -9,5 +9,5 @@ public class AnalyzeModel(ApplicationDbContext context, IMemoryCache cache, ILog
 {
     public async Task OnGetAsync() => await LoadCommonDataAsync();
 
-    public async Task<IActionResult> OnPostLoadDataAsync() => await LoadFilteredDataAsync();
+    public async Task<IActionResult> OnPostAsync() => await LoadFilteredDataAsync();
 }
