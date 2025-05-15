@@ -59,7 +59,7 @@ public abstract class BaseOptionPageModel(ApplicationDbContext context, IMemoryC
                 .ToListAsync();
 
             return rawExpirations
-                .OrderBy(e => DateTime.ParseExact(e, "ddMMMyy", CultureInfo.InvariantCulture))
+                .OrderBy(e => DateTime.ParseExact(e, "dMMMyy", CultureInfo.InvariantCulture))
                 .ToList();
         }))!;
     }
