@@ -1,19 +1,34 @@
 ﻿@page
+@using Option.Data.Shared.Dto
 @model OptionModel
 @{
     ViewData["Title"] = "Deribit Options Data";
+
+    List<double> topCallOi = Model?.ViewModel?.OptionData?
+        .OrderByDescending(x => x.CallOi)
+        .Take(5)
+        .Select(x => x.CallOi)
+        .ToList() ?? [];
+
+    List<double> topPutOi = Model?.ViewModel?.OptionData?
+        .OrderByDescending(x => x.PutOi)
+        .Take(5)
+        .Select(x => x.PutOi)
+        .ToList() ?? [];
 }
 
 <div class="container">
     <h1>Deribit Options Data</h1>
-    <partial name="_OptionsForm" model="Model" />
 
-    @if (Model.ViewModel.OptionData?.Any() == true)
+    <partial name="_OptionsForm" model="Model"/>
+
+    @if (Model?.ViewModel?.OptionData?.Any() == true)
     {
         <div class="option-data-container">
-            <h4>Options Data for @(Model.ViewModel.SelectedCurrencyId == 1 ? "BTC" : "ETH") - @Model.ViewModel.SelectedExpiration 
+            <h4>Options Data
+                for @(Model.ViewModel.SelectedCurrencyId == 1 ? "BTC" : "ETH") - @Model.ViewModel.SelectedExpiration
                 Underlying Price: @Model.ViewModel.UnderlyingPrice.ToString("N2")
-                </h4>
+            </h4>
             <table>
                 <thead>
                 <tr>
@@ -30,16 +45,19 @@
                 </tr>
                 </thead>
                 <tbody>
-                @foreach (var data in Model.ViewModel.OptionData)
+                @foreach (OptionData data in Model.ViewModel.OptionData)
                 {
+                    bool isTopCall = topCallOi.Contains(data.CallOi);
+                    bool isTopPut = topPutOi.Contains(data.PutOi);
+
                     <tr>
                         <td>@data.CallGamma.ToString("F6")</td>
                         <td>@data.CallDelta.ToString("F2")</td>
                         <td>@data.CallPrice.ToString("F2")</td>
-                        <td>@data.CallOi.ToString("N0")</td>
+                        <td style="background-color: @(isTopCall ? "#ccffcc" : "transparent")">@data.CallOi.ToString("N0")</td>
                         <td>@data.Strike</td>
                         <td>@data.Iv.ToString("F2")</td>
-                        <td>@data.PutOi.ToString("N0")</td>
+                        <td style="background-color: @(isTopPut ?"#ffcccc"  : "transparent")">@data.PutOi.ToString("N0")</td>
                         <td>@data.PutPrice.ToString("F2")</td>
                         <td>@data.PutDelta.ToString("F2")</td>
                         <td>@data.PutGamma.ToString("F6")</td>
@@ -58,7 +76,7 @@
     }
 </div>
 
-@section Scripts{
+@section Scripts {
     <script>
     </script>
 }
