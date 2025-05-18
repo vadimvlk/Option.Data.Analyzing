@@ -7,6 +7,7 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{ACF28C13-B5F9-4B62-8373-22A089F20C2F}"
 	ProjectSection(SolutionItems) = preProject
 		compose.yaml = compose.yaml
+		traefik.yaml = traefik.yaml
 	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Option.Data.Shared", "Option.Data.Shared\Option.Data.Shared.csproj", "{682C3E43-EA94-46D2-A2E2-6F8E29446CCD}"

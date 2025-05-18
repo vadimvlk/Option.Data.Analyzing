@@ -1,0 +1,33 @@
+﻿api:
+  dashboard: true
+  insecure: true
+
+providers:
+  docker:
+    exposedByDefault: false
+    network: deribit_share-network  # Match your docker-compose network name
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+
+  websecure:
+    address: ":443"
+    http:
+      tls: {}
+
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: vadimvlk@protonmail.com  # Replace with a real email
+      storage: /letsencrypt/acme.json
+      httpChallenge:
+        entryPoint: web
+
+log:
+  level: DEBUG  # Set to INFO in production
