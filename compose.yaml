@@ -51,6 +51,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/deribit/traefik/letsencrypt:/letsencrypt  # Для SSL-сертификатов
       - /var/deribit/traefik.yml:/traefik.yml:ro       # Конфиг Traefik
+    labels:
+      - "traefik.http.middlewares.forwardedheaders.headers.forwardedHeaders.trustedIPs=127.0.0.1/32,172.0.0.0/8"
     networks:
       - share-network
     command:
