@@ -1,10 +1,11 @@
-using System.Text;
-using Option.Data.Database;
-using Option.Data.Shared;
-using Option.Data.Shared.Configuration;
-using Option.Data.Ui.Services;
 using Serilog;
+using System.Net;
+using System.Text;
 using Serilog.Events;
+using Option.Data.Shared;
+using Option.Data.Database;
+using Option.Data.Ui.Services;
+using Microsoft.AspNetCore.HttpOverrides;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -30,6 +31,17 @@ builder.AddDeribitClientConfiguration();
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IOptionsAnalysisHtmlBuilder, OptionsAnalysisHtmlBuilder>();
 var app = builder.Build();
+
+ForwardedHeadersOptions options = new ()
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+};
+
+options.KnownNetworks.Clear();
+options.KnownNetworks.Add(new Microsoft.AspNetCore.HttpOverrides.IPNetwork(IPAddress.Parse("172.0.0.0"), 8));
+options.KnownNetworks.Add(new Microsoft.AspNetCore.HttpOverrides.IPNetwork(IPAddress.Parse("10.0.0.0"), 8));
+    
+app.UseForwardedHeaders(options);
 
 // Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())
