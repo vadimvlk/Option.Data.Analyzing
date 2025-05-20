@@ -1,0 +1,37 @@
+﻿@using Option.Data.Shared.Poco
+@model BaseOptionPageModel
+<form method="post">
+    <div class="grid">
+        <div>
+            <label for="currency">Currency</label>
+            <select id="currency" name="ViewModel.SelectedCurrencyId" required>
+                <option value="">Select currency</option>
+                @foreach (CurrencyType currency in Model.ViewModel.Currencies)
+                {
+                    <option value="@currency.Id" selected="@(currency.Id == Model.ViewModel.SelectedCurrencyId)">@currency.Name</option>
+                }
+            </select>
+        </div>
+
+        <div>
+            <label for="datetime">Date & Time</label>
+            <select id="datetime" name="ViewModel.SelectedDateTime" required>
+                <option value="">Select date & time</option>
+                @{
+                    List<DateTimeOffset> orderedDates = Model.ViewModel.AvailableDates.OrderBy(d => d).ToList();
+                    var lastDate = orderedDates.LastOrDefault();
+                    var selectedDate = Model.ViewModel.SelectedDateTime != default ? Model.ViewModel.SelectedDateTime : lastDate;
+                }
+                @foreach (var date in orderedDates)
+                {
+                    <option value="@date.ToString("o")" selected="@(date == selectedDate)">@date.ToString("g")</option>
+                }
+            </select>
+            @if (orderedDates.Any())
+            {
+                <small>Available range: @orderedDates.Min().ToString("g") to @orderedDates.Max().ToString("g")</small>
+            }
+        </div>
+    </div>
+    <button type="submit" asp-page-handler="" class="contrast">Load Data</button>
+</form>

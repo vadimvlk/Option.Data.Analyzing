@@ -8,8 +8,7 @@
                 <option value="">Select currency</option>
                 @foreach (CurrencyType currency in Model.ViewModel.Currencies)
                 {
-                    <option value="@currency.Id"
-                            selected="@(currency.Id == Model.ViewModel.SelectedCurrencyId)">@currency.Name</option>
+                    <option value="@currency.Id" selected="@(currency.Id == Model.ViewModel.SelectedCurrencyId)">@currency.Name</option>
                 }
             </select>
         </div>

@@ -68,7 +68,7 @@ public abstract class BaseOptionPageModel(ApplicationDbContext context, IMemoryC
     {
         return (await cache.GetOrCreateAsync("AvailableDates", async entry =>
         {
-            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1);
+            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(15);
             return await context.DeribitData
                 .Select(o => o.CreatedAt)
                 .Distinct()
@@ -82,9 +82,9 @@ public abstract class BaseOptionPageModel(ApplicationDbContext context, IMemoryC
         if (!ModelState.IsValid)
             return Page();
 
-        ViewModel.Currencies = cache.Get<List<CurrencyType>>("CurrencyTypes") ?? new List<CurrencyType>();
-        ViewModel.Expirations = cache.Get<List<string>>("Expirations") ?? new List<string>();
-        ViewModel.AvailableDates = cache.Get<List<DateTimeOffset>>("AvailableDates") ?? new List<DateTimeOffset>();
+        ViewModel.Currencies = cache.Get<List<CurrencyType>>("CurrencyTypes") ?? [];
+        ViewModel.Expirations = cache.Get<List<string>>("Expirations") ?? [];
+        ViewModel.AvailableDates = cache.Get<List<DateTimeOffset>>("AvailableDates") ?? [];
 
        // Create a cache key based on the selected parameters
         string cacheKey = $"DataValidation_{ViewModel.SelectedExpiration}_{ViewModel.SelectedDateTime}";

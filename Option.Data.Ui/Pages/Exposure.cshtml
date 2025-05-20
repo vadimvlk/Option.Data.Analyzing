@@ -1,0 +1,137 @@
+﻿@page
+@using Option.Data.Ui.Models
+@using Option.Data.Ui.Services
+@inject IOptionsAnalysisHtmlBuilder HtmlBuilder;
+@{
+    ViewData["Title"] = "Options Exposure Analysis";
+}
+
+@model ExposureModel
+
+<div class="container">
+    <h2>Options Exposure Analysis</h2>
+
+    <partial name="_BaseOptionForm" model="Model"/>
+
+    @if (Model.ExposureViewModel.ExpirationsData.Any())
+    {
+        <h4>Analysis for @(Model.ViewModel.SelectedCurrencyId == 1 ? "BTC" : "ETH") as
+            of @Model.ViewModel.SelectedDateTime.ToString("g")</h4>
+        <div class="grid">
+            <div>
+                <article>
+                    <h4>Expiration Analysis</h4>
+                    <div class="overflow-auto">
+                        <table>
+                            <thead>
+                            <tr class="table-secondary">
+                                <th>Expiration</th>
+                                <th>Underliyng Price</th>
+                                <th class='table-success'>Равновестная цена</th>
+                                <th class='table-primary'>Центр тяжести Call</th>
+                                <th class='table-danger'>Центр тяжести Put</th>
+                                <th>Верхняя граница</th>
+                                <th>Нижняя граница</th>
+                                <th>Delta Exposure</th>
+                                <th>Gamma Exposure</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            @foreach (ExpirationAnalysis expData in Model.ExposureViewModel.ExpirationsData)
+                            {
+                                
+                                    // Calculate delta/gamma exposures
+                                    double deltaExposure = -expData.OptionData.Sum(o =>
+                                        o.CallDelta * o.CallOi + o.PutDelta * o.PutOi);
+                                    string deltaClass = deltaExposure >= 0 ? "text-success" : "text-danger";
+                                    
+                                    double gammaExposure = -expData.OptionData.Sum(o =>
+                                        o.CallGamma * o.CallOi + o.PutGamma * o.PutOi);
+                                    
+                                    // Determine gravity class
+                                    string gravityClass = expData.GravityEquilibrium > expData.UnderlyingPrice ? "text-success" :
+                                                        expData.GravityEquilibrium < expData.UnderlyingPrice ? "text-danger" : "text-muted";
+                                    
+                                    // Determine row class based on position relative to gravity equilibrium
+                                    string rowClass = "table-light";
+                                    if (expData.UnderlyingPrice < expData.GravityEquilibrium) 
+                                        rowClass = "table-success bg-opacity-25"; // Bullish - light green
+                                    else if (expData.UnderlyingPrice > expData.GravityEquilibrium) 
+                                        rowClass = "table-danger bg-opacity-25";  // Bearish - light red
+
+                                <tr class="@rowClass">
+                                    <td style="background-color: #fff3cd">@expData.Expiration</td>
+                                    <td style="background-color: #d1e7dd">@expData.UnderlyingPrice.ToString("N2")</td>
+                                    <td class='table-success'>
+                                        <span class="@gravityClass">@expData.GravityEquilibrium.ToString("N2")</span>
+                                    </td>
+                                    <td class='table-primary'>
+                                        <span class="text-primary">@expData.CallCenterOfGravity.ToString("N2")</span>
+                                    </td>
+                                    <td class='table-danger'>
+                                        <span class="text-danger">@expData.PutCenterOfGravity.ToString("N2")</span>
+                                    </td>
+                                    <td>
+                                        @if (expData.UpperBoundary == null)
+                                        {
+                                            <span class="text-muted">N/A</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="text-success">@expData.UpperBoundary?.ToString("N2")</span>
+                                        }
+                                    </td>
+                                    <td>
+                                        @if (expData.LowerBoundary == null)
+                                        {
+                                            <span class="text-muted">N/A</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="text-danger">@expData.LowerBoundary?.ToString("N2")</span>
+                                        }
+                                    </td>
+                                    <td>
+                                        <span class="@deltaClass">@deltaExposure.ToString("N2")</span>
+                                    </td>
+                                    <td>
+                                        <span class="text-danger">@gammaExposure.ToString("N2")</span>
+                                    </td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </div>
+                </article>
+            </div>
+        </div>
+
+        <!-- Detailed analysis for each expiration -->
+        @foreach (ExpirationAnalysis expData in Model.ExposureViewModel.ExpirationsData)
+        {
+            <details>
+                <summary>Detailed Analysis for @expData.Expiration</summary>
+                <div class="option-analysis-container mt-4">
+                    <h4>Call/Put Ratio</h4>
+                    @Html.Raw(HtmlBuilder.CalculateCallPutRatioHtml(expData.OptionData))
+                    <h4>Open Interest</h4>
+                    @Html.Raw(HtmlBuilder.AnalyzeOpenInterestHtml(expData.OptionData))
+                </div>
+            </details>
+        }
+    }
+    else
+    {
+        <div class="option-data-container">
+            <h4>Exposure Analysis</h4>
+            <p>No data available. Please select a currency and date to load data.</p>
+        </div>
+    }
+</div>
+
+@section Scripts{
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+        });
+    </script>
+}
