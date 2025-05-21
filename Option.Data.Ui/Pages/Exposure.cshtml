@@ -40,24 +40,25 @@
                             @foreach (ExpirationAnalysis expData in Model.ExposureViewModel.ExpirationsData)
                             {
                                 
-                                    // Calculate delta/gamma exposures
-                                    double deltaExposure = -expData.OptionData.Sum(o =>
-                                        o.CallDelta * o.CallOi + o.PutDelta * o.PutOi);
-                                    string deltaClass = deltaExposure >= 0 ? "text-success" : "text-danger";
-                                    
-                                    double gammaExposure = -expData.OptionData.Sum(o =>
-                                        o.CallGamma * o.CallOi + o.PutGamma * o.PutOi);
-                                    
-                                    // Determine gravity class
-                                    string gravityClass = expData.GravityEquilibrium > expData.UnderlyingPrice ? "text-success" :
-                                                        expData.GravityEquilibrium < expData.UnderlyingPrice ? "text-danger" : "text-muted";
-                                    
-                                    // Determine row class based on position relative to gravity equilibrium
-                                    string rowClass = "table-light";
-                                    if (expData.UnderlyingPrice < expData.GravityEquilibrium) 
-                                        rowClass = "table-success bg-opacity-25"; // Bullish - light green
-                                    else if (expData.UnderlyingPrice > expData.GravityEquilibrium) 
-                                        rowClass = "table-danger bg-opacity-25";  // Bearish - light red
+                                // Calculate delta/gamma exposures
+                                double deltaExposure = -expData.OptionData.Sum(o =>
+                                    o.CallDelta * o.CallOi + o.PutDelta * o.PutOi);
+                                string deltaClass = deltaExposure >= 0 ? "text-success" : "text-danger";
+                                
+                                double gammaExposure = -expData.OptionData.Sum(o =>
+                                    o.CallGamma * o.CallOi + o.PutGamma * o.PutOi);
+                                
+                                // Determine gravity class
+                                string gravityClass = expData.GravityEquilibrium > expData.UnderlyingPrice ? "text-success" :
+                                                    expData.GravityEquilibrium < expData.UnderlyingPrice ? "text-danger" : "text-muted";
+                                
+                                // Determine row class based on position relative to gravity equilibrium
+                                string rowClass = "table-light";
+                                if (expData.UnderlyingPrice < expData.GravityEquilibrium) 
+                                    rowClass = "table-success bg-opacity-25"; // Bullish - light green
+                                else if (expData.UnderlyingPrice > expData.GravityEquilibrium) 
+                                    rowClass = "table-danger bg-opacity-25";  // Bearish - light red                                   
+                                
 
                                 <tr class="@rowClass">
                                     <td style="background-color: #fff3cd">@expData.Expiration</td>
@@ -78,7 +79,14 @@
                                         }
                                         else
                                         {
-                                            <span class="text-success">@expData.UpperBoundary?.ToString("N2")</span>
+                                            double deviation = (double)expData.UpperBoundary - expData.UnderlyingPrice;
+                                            double percentDeviation = deviation / expData.UnderlyingPrice * 100;
+                                            string deviationClass = deviation > 0 ? "text-success" : "text-danger";
+                                            
+                                            <div>
+                                                <span class="text-success">@expData.UpperBoundary?.ToString("N2")</span>
+                                                <small class="@deviationClass">(@percentDeviation.ToString("N2")%)</small>
+                                            </div>
                                         }
                                     </td>
                                     <td>
@@ -88,7 +96,14 @@
                                         }
                                         else
                                         {
-                                            <span class="text-danger">@expData.LowerBoundary?.ToString("N2")</span>
+                                            double deviation = (double)expData.LowerBoundary - expData.UnderlyingPrice;
+                                            double percentDeviation = deviation / expData.UnderlyingPrice * 100;
+                                            string deviationClass = deviation > 0 ? "text-success" : "text-danger";
+                                            
+                                            <div>
+                                                <span class="text-danger">@expData.LowerBoundary?.ToString("N2")</span>
+                                                <small class="@deviationClass">(@percentDeviation.ToString("N2")%)</small>
+                                            </div>
                                         }
                                     </td>
                                     <td>
