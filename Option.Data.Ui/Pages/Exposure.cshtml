@@ -22,14 +22,14 @@
                 <article>
                     <h4>Expiration Analysis</h4>
                     <div class="overflow-auto">
-                        <table>
+                        <table class="table table-bordered table-hover">
                             <thead>
-                            <tr class="table-secondary">
+                            <tr>
                                 <th>Expiration</th>
                                 <th>Underliyng Price</th>
-                                <th class='table-success'>Равновестная цена</th>
-                                <th class='table-primary'>Центр тяжести Call</th>
-                                <th class='table-danger'>Центр тяжести Put</th>
+                                <th >Равновестная цена</th>
+                                <th >Центр тяжести Call</th>
+                                <th >Центр тяжести Put</th>
                                 <th>Верхняя граница</th>
                                 <th>Нижняя граница</th>
                                 <th>Delta Exposure</th>
@@ -39,7 +39,6 @@
                             <tbody>
                             @foreach (ExpirationAnalysis expData in Model.ExposureViewModel.ExpirationsData)
                             {
-                                
                                 // Calculate delta/gamma exposures
                                 double deltaExposure = -expData.OptionData.Sum(o =>
                                     o.CallDelta * o.CallOi + o.PutDelta * o.PutOi);
@@ -52,24 +51,16 @@
                                 string gravityClass = expData.GravityEquilibrium > expData.UnderlyingPrice ? "text-success" :
                                                     expData.GravityEquilibrium < expData.UnderlyingPrice ? "text-danger" : "text-muted";
                                 
-                                // Determine row class based on position relative to gravity equilibrium
-                                string rowClass = "table-light";
-                                if (expData.UnderlyingPrice < expData.GravityEquilibrium) 
-                                    rowClass = "table-success bg-opacity-25"; // Bullish - light green
-                                else if (expData.UnderlyingPrice > expData.GravityEquilibrium) 
-                                    rowClass = "table-danger bg-opacity-25";  // Bearish - light red                                   
-                                
-
-                                <tr class="@rowClass">
-                                    <td style="background-color: #fff3cd">@expData.Expiration</td>
-                                    <td style="background-color: #d1e7dd">@expData.UnderlyingPrice.ToString("N2")</td>
-                                    <td class='table-success'>
+                                <tr class="table-light">
+                                    <td class='table-warning'>@expData.Expiration</td>
+                                    <td class='table-success'>@expData.UnderlyingPrice.ToString("N2")</td>
+                                    <td >
                                         <span class="@gravityClass">@expData.GravityEquilibrium.ToString("N2")</span>
                                     </td>
-                                    <td class='table-primary'>
+                                    <td >
                                         <span class="text-primary">@expData.CallCenterOfGravity.ToString("N2")</span>
                                     </td>
-                                    <td class='table-danger'>
+                                    <td >
                                         <span class="text-danger">@expData.PutCenterOfGravity.ToString("N2")</span>
                                     </td>
                                     <td>
@@ -120,7 +111,6 @@
                 </article>
             </div>
         </div>
-
         <!-- Detailed analysis for each expiration -->
         @foreach (ExpirationAnalysis expData in Model.ExposureViewModel.ExpirationsData)
         {
