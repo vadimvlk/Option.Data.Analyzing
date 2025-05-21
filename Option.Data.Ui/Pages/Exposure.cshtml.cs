@@ -13,7 +13,7 @@ public class ExposureModel(
     ApplicationDbContext context,
     IMemoryCache cache,
     ILogger<ExposureModel> logger,
-    IHttpClientFactory clientFactory) : BaseOptionPageModel(context, cache, logger)
+    IHttpClientFactory clientFactory) : BaseOptionPageModel(context, cache: cache, logger)
 {
     [BindProperty]
     public ExposureViewModel ExposureViewModel { get; set; } = new();
@@ -25,31 +25,32 @@ public class ExposureModel(
 
     public async Task OnGetAsync() => await LoadCommonDataAsync();
 
-
     public async Task<IActionResult> OnPostAsync()
     {
+        await LoadCommonDataAsync();
+        
         if (!ModelState.IsValid)
         {
             return Page();
         }
-
-        // Reload base data
-        ViewModel.Currencies = _cache.Get<List<CurrencyType>>("CurrencyTypes") ?? [];
-        ViewModel.Expirations = _cache.Get<List<string>>("Expirations") ?? [];
-        ViewModel.AvailableDates = _cache.Get<List<DateTimeOffset>>("AvailableDates") ?? [];
-
-
+        
         try
         {
             // Load data for each expiration
             ExposureViewModel.ExpirationsData = [];
-
-            // Получаем все данные по опционам для выбранной даты и валюты
-            List<DeribitData> allOptionData = await _context.DeribitData
-                .Where(d => d.CurrencyTypeId == ViewModel.SelectedCurrencyId &&
-                           d.CreatedAt == ViewModel.SelectedDateTime)
-                .Include(deribitData => deribitData.Type)
-                .ToListAsync();
+            
+            string dataCacheKey = $"ExposureData_{ViewModel.SelectedCurrencyId}_{ViewModel.SelectedDateTime}";
+            
+            // Получаем все данные по опционам для выбранной даты и валюты.
+            List<DeribitData> allOptionData = (await _cache.GetOrCreateAsync(dataCacheKey, async entry =>
+            {
+                entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(15);
+                return await _context.DeribitData
+                    .Where(d => d.CurrencyTypeId == ViewModel.SelectedCurrencyId &&
+                                d.CreatedAt == ViewModel.SelectedDateTime)
+                    .Include(deribitData => deribitData.Type)
+                    .ToListAsync();
+            }))!;
 
             // Группируем данные по экспирации для более эффективного доступа
             Dictionary<string, List<DeribitData>> dataByExpiration = allOptionData
@@ -240,7 +241,7 @@ public class ExposureModel(
         return pnl;
     }
 
-    private async Task<List<string>> GetOrCreateExpirationsAsync()
+    protected override async Task<List<string>> GetOrCreateExpirationsAsync()
     {
         return (await _cache.GetOrCreateAsync("AvailableExpirations", async entry =>
         {

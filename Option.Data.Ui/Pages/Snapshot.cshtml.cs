@@ -1,62 +1,29 @@
 ﻿using System.Web;
 using Option.Data.Database;
-using Option.Data.Ui.Models;
-using Option.Data.Shared.Poco;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using Option.Data.Shared.Configuration;
-using Microsoft.AspNetCore.Mvc.RazorPages;
-using Microsoft.Extensions.Caching.Memory;
 using Option.Data.Shared.Dto;
+using Microsoft.AspNetCore.Mvc;
+using Option.Data.Shared.Configuration;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace Option.Data.Ui.Pages;
 
-public class SnapshotModel : PageModel
+public class SnapshotModel(
+    ApplicationDbContext context,
+    IMemoryCache cache,
+    ILogger<SnapshotModel> logger,
+    IHttpClientFactory clientFactory)
+    : BaseOptionPageModel(context, cache, logger)
 {
-    [BindProperty]
-    public OptionViewModel ViewModel { get; set; } = new();
+    private readonly IMemoryCache _cache = cache;
+    private readonly HttpClient _httpClient = clientFactory.CreateClient(DeribitConfig.ClientName);
 
-    private readonly IMemoryCache _cache;
-    private readonly HttpClient _httpClient;
-    private readonly ApplicationDbContext _context;
-    private readonly ILogger<SnapshotModel> _logger;
-
-    public SnapshotModel(ApplicationDbContext context,
-        IMemoryCache cache,
-        ILogger<SnapshotModel> logger,
-        IHttpClientFactory clientFactory)
-    {
-        _context = context;
-        _cache = cache;
-        _logger = logger;
-        _httpClient = clientFactory.CreateClient(DeribitConfig.ClientName);
-    }
-
-    public async Task<IActionResult> OnGetAsync()
-    {
-        try
-        {
-            ViewModel.Currencies = (await _cache.GetOrCreateAsync("CurrencyTypes", async entry =>
-            {
-                entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromDays(3);
-                return await _context.CurrencyType.OrderBy(c => c.Name).ToListAsync();
-            }))!;
-
-            ViewModel.Expirations = await GetOrCreateExpirationsAsync();
-        }
-        catch (Exception e)
-        {
-            _logger.LogError(e, "Error loading data");
-            ModelState.AddModelError(string.Empty, $"Error loading data: {e.Message}");
-            ViewModel.Currencies = new List<CurrencyType>();
-            ViewModel.Expirations = new List<string>();
-        }
-
-        return Page();
-    }
+    public async Task OnGetAsync() => await LoadCommonDataAsync(useAvailableDates: false);
 
     public async Task<IActionResult> OnPostAsync()
     {
+        
+        await LoadCommonDataAsync(useAvailableDates: false);
+        
         if (!ModelState.IsValid)
         {
             return Page();
@@ -65,10 +32,7 @@ public class SnapshotModel : PageModel
         try
         {
             string dataCacheKey = $"DeribitData_{ViewModel.SelectedCurrencyId}";
-
-            ViewModel.Currencies = _cache.Get<List<CurrencyType>>("CurrencyTypes") ?? new List<CurrencyType>();
-            ViewModel.Expirations = await GetOrCreateExpirationsAsync();
-
+          
             var currency = ViewModel.Currencies.Single(c => c.Id == ViewModel.SelectedCurrencyId).Name;
 
             var queryParams = HttpUtility.ParseQueryString(string.Empty);
@@ -85,11 +49,11 @@ public class SnapshotModel : PageModel
 
                 if (summaryData?.Data == null || summaryData.Data.Count == 0)
                 {
-                    _logger.LogWarning("No data returned from Deribit server");
+                    logger.LogWarning("No data returned from Deribit server");
                     return [];
                 }
+
                 return summaryData.Data;
-                
             }))!;
 
             // Process option data
@@ -99,10 +63,8 @@ public class SnapshotModel : PageModel
         }
         catch (Exception e)
         {
-            _logger.LogError(e, "Error loading option data");
+            logger.LogError(e, "Error loading option data");
             ModelState.AddModelError(string.Empty, $"Error loading option data: {e.Message}");
-            ViewModel.Currencies = _cache.Get<List<CurrencyType>>("CurrencyTypes") ?? new List<CurrencyType>();
-            ViewModel.Expirations = await GetOrCreateExpirationsAsync();
             return Page();
         }
     }
@@ -126,7 +88,7 @@ public class SnapshotModel : PageModel
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to parse instrument name: {ArgInstrumentName}", d.InstrumentName);
+                    logger.LogWarning(ex, "Failed to parse instrument name: {ArgInstrumentName}", d.InstrumentName);
                     return null;
                 }
             })
@@ -172,7 +134,7 @@ public class SnapshotModel : PageModel
             .ToList();
     }
 
-    private async Task<List<string>> GetOrCreateExpirationsAsync()
+    protected override async Task<List<string>> GetOrCreateExpirationsAsync()
     {
         return (await _cache.GetOrCreateAsync("AvailableExpirations", async entry =>
         {
@@ -184,8 +146,8 @@ public class SnapshotModel : PageModel
             if (expirations?.Data.Options != null && expirations.Data.Options.Count != 0)
                 return expirations.Data.Options;
 
-            _logger.LogWarning("No data returned for expirations");
-            return new List<string>();
+            logger.LogWarning("No data returned for expirations");
+            return [];
         }))!;
     }
 

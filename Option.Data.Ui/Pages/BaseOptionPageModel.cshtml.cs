@@ -16,14 +16,17 @@ public abstract class BaseOptionPageModel(ApplicationDbContext context, IMemoryC
     public OptionViewModel ViewModel { get; set; } = new();
 
     // Shared method to load initial data
-    protected async Task LoadCommonDataAsync()
+    protected async Task LoadCommonDataAsync(bool useCurrencies = true, bool useExpirations = true, bool useAvailableDates = true)
     {
         try
         {
-            ViewModel.Currencies = await GetOrCreateCurrencyTypesAsync();
-            ViewModel.Expirations = await GetOrCreateExpirationsAsync();
-            ViewModel.AvailableDates = await GetOrCreateAvailableDatesAsync();
-            
+            if (useCurrencies)
+                ViewModel.Currencies = await GetOrCreateCurrencyTypesAsync();
+            if (useExpirations)
+                ViewModel.Expirations = await GetOrCreateExpirationsAsync();
+            if (useAvailableDates)
+                ViewModel.AvailableDates = await GetOrCreateAvailableDatesAsync();
+
             // Set datetime if not already.
             if (ViewModel.SelectedDateTime == default && ViewModel.AvailableDates.Count != 0)
             {
@@ -33,9 +36,9 @@ public abstract class BaseOptionPageModel(ApplicationDbContext context, IMemoryC
         catch (Exception e)
         {
             ModelState.AddModelError(string.Empty, $"Error loading data: {e.Message}");
-            ViewModel.Currencies = new List<CurrencyType>();
-            ViewModel.Expirations = new List<string>();
-            ViewModel.AvailableDates = new List<DateTimeOffset>();
+            ViewModel.Currencies = [];
+            ViewModel.Expirations = [];
+            ViewModel.AvailableDates = [];
         }
     }
 
@@ -48,7 +51,7 @@ public abstract class BaseOptionPageModel(ApplicationDbContext context, IMemoryC
         }))!;
     }
 
-    private async Task<List<string>> GetOrCreateExpirationsAsync()
+    protected virtual async Task<List<string>> GetOrCreateExpirationsAsync()
     {
         return (await cache.GetOrCreateAsync("Expirations", async entry =>
         {
@@ -76,17 +79,15 @@ public abstract class BaseOptionPageModel(ApplicationDbContext context, IMemoryC
                 .ToListAsync();
         }))!;
     }
-    
+
     protected async Task<IActionResult> LoadFilteredDataAsync()
     {
         if (!ModelState.IsValid)
             return Page();
 
-        ViewModel.Currencies = cache.Get<List<CurrencyType>>("CurrencyTypes") ?? [];
-        ViewModel.Expirations = cache.Get<List<string>>("Expirations") ?? [];
-        ViewModel.AvailableDates = cache.Get<List<DateTimeOffset>>("AvailableDates") ?? [];
+        await LoadCommonDataAsync();
 
-       // Create a cache key based on the selected parameters
+        // Create a cache key based on the selected parameters
         string cacheKey = $"DataValidation_{ViewModel.SelectedExpiration}_{ViewModel.SelectedDateTime}";
         string dataCacheKey = $"FilteredData_{ViewModel.SelectedCurrencyId}_{ViewModel.SelectedExpiration}_{ViewModel.SelectedDateTime}";
 
@@ -101,7 +102,7 @@ public abstract class BaseOptionPageModel(ApplicationDbContext context, IMemoryC
         if (!isValidTime)
         {
             logger.LogWarning("Selected is not valid expiration time. CacheKey for validation {CacheKey}", cacheKey);
-            
+
             ModelState.AddModelError("ViewModel.SelectedDateTime",
                 "Please select a valid date/time from the available options");
             return Page();
@@ -128,7 +129,7 @@ public abstract class BaseOptionPageModel(ApplicationDbContext context, IMemoryC
 
         // Get all unique strikes
         HashSet<int> allStrikes = filteredData.Select(d => d.Strike).ToHashSet();
-        
+
         ViewModel.UnderlyingPrice = filteredData.Max(x => x.UnderlyingPrice);
 
         ViewModel.OptionData = allStrikes.OrderBy(strike => strike)
