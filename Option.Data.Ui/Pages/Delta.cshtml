@@ -49,12 +49,6 @@
             (function () {
                 const payload = JSON.parse(document.getElementById('delta-data').textContent);
 
-                const baseOptions = {
-                    responsive: true,
-                    interaction: { mode: 'index', intersect: false },
-                    scales: { y: { beginAtZero: false } }
-                };
-
                 new Chart(document.getElementById('priceChart'), {
                     type: 'line',
                     data: {
@@ -68,7 +62,11 @@
                             pointRadius: 2
                         }]
                     },
-                    options: baseOptions
+                    options: {
+                        responsive: true,
+                        interaction: { mode: 'index', intersect: false },
+                        scales: { y: { beginAtZero: false } }
+                    }
                 });
 
                 new Chart(document.getElementById('deltaChart'), {
@@ -84,7 +82,11 @@
                             pointRadius: 2
                         }]
                     },
-                    options: baseOptions
+                    options: {
+                        responsive: true,
+                        interaction: { mode: 'index', intersect: false },
+                        scales: { y: { beginAtZero: false } }
+                    }
                 });
             })();
         </script>
