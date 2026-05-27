@@ -1,0 +1,92 @@
+@page
+@using System.Text.Json
+@using Option.Data.Ui.Models
+@model DeltaModel
+@{
+    ViewData["Title"] = "Delta Exposure Analysis";
+
+    List<string> labels = Model.DeltaViewModel.Series.Select(p => p.Time.ToString("g")).ToList();
+    List<double> prices = Model.DeltaViewModel.Series.Select(p => p.UnderlyingPrice).ToList();
+    List<double> deltas = Model.DeltaViewModel.Series.Select(p => p.DeltaExposure).ToList();
+}
+
+<div class="container">
+    <h2>Delta Exposure Over Time</h2>
+
+    <partial name="_CurrencyExpirationForm" model="Model"/>
+
+    @if (Model.DeltaViewModel.Series.Any())
+    {
+        <h4>Analysis for @(Model.ViewModel.SelectedCurrencyId == 1 ? "BTC" : "ETH") — @Model.ViewModel.SelectedExpiration</h4>
+
+        <article>
+            <h5>Underlying Price</h5>
+            <canvas id="priceChart" height="100"></canvas>
+        </article>
+        <article>
+            <h5>Delta Exposure</h5>
+            <canvas id="deltaChart" height="100"></canvas>
+        </article>
+
+        <script id="delta-data" type="application/json">
+            @Html.Raw(JsonSerializer.Serialize(new { labels, prices, deltas }))
+        </script>
+    }
+    else
+    {
+        <div class="option-data-container">
+            <h4>Delta Exposure Analysis</h4>
+            <p>No data available. Please select a currency and expiration to load data.</p>
+        </div>
+    }
+</div>
+
+@section Scripts {
+    @if (Model.DeltaViewModel.Series.Any())
+    {
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <script>
+            (function () {
+                const payload = JSON.parse(document.getElementById('delta-data').textContent);
+
+                const baseOptions = {
+                    responsive: true,
+                    interaction: { mode: 'index', intersect: false },
+                    scales: { y: { beginAtZero: false } }
+                };
+
+                new Chart(document.getElementById('priceChart'), {
+                    type: 'line',
+                    data: {
+                        labels: payload.labels,
+                        datasets: [{
+                            label: 'Underlying Price',
+                            data: payload.prices,
+                            borderColor: '#4361ee',
+                            backgroundColor: 'rgba(67,97,238,0.1)',
+                            tension: 0.2,
+                            pointRadius: 2
+                        }]
+                    },
+                    options: baseOptions
+                });
+
+                new Chart(document.getElementById('deltaChart'), {
+                    type: 'line',
+                    data: {
+                        labels: payload.labels,
+                        datasets: [{
+                            label: 'Delta Exposure',
+                            data: payload.deltas,
+                            borderColor: '#f9844a',
+                            backgroundColor: 'rgba(249,132,74,0.1)',
+                            tension: 0.2,
+                            pointRadius: 2
+                        }]
+                    },
+                    options: baseOptions
+                });
+            })();
+        </script>
+    }
+}
