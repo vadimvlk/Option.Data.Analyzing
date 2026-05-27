@@ -32,7 +32,7 @@ public class DeltaModel(
         {
             string cacheKey = $"DeltaSeries_{ViewModel.SelectedCurrencyId}_{ViewModel.SelectedExpiration}";
 
-            DeltaViewModel.Series = (await _cache.GetOrCreateAsync(cacheKey, async entry =>
+            DeltaViewModel.Series = await _cache.GetOrCreateAsync(cacheKey, async entry =>
             {
                 entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(15);
 
@@ -51,7 +51,7 @@ public class DeltaModel(
                     })
                     .OrderBy(p => p.Time)
                     .ToList();
-            }))!;
+            }) ?? [];
 
             return Page();
         }
