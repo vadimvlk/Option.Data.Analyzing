@@ -85,7 +85,15 @@
                     options: {
                         responsive: true,
                         interaction: { mode: 'index', intersect: false },
-                        scales: { y: { beginAtZero: false } }
+                        scales: {
+                            y: {
+                                beginAtZero: false,
+                                grid: {
+                                    color: (ctx) => ctx.tick.value === 0 ? '#343a40' : 'rgba(0,0,0,0.1)',
+                                    lineWidth: (ctx) => ctx.tick.value === 0 ? 1.25 : 1
+                                }
+                            }
+                        }
                     }
                 });
             })();
