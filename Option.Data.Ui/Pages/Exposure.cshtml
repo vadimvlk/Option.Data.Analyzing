@@ -32,21 +32,21 @@
                                 <th >Центр тяжести Put</th>
                                 <th>Верхняя граница</th>
                                 <th>Нижняя граница</th>
-                                <th>Delta Exposure</th>
-                                <th>Gamma Exposure</th>
+                                <th title="Долларовая дельта-экспозиция продавца, USD на $1 движения спота">DEX (USD/$)</th>
+                                <th title="Чистая дилерская гамма-экспозиция, USD на 1% движения. >0 — дилеры гасят волатильность, <0 — усиливают">Net GEX (USD/1%)</th>
+                                <th title="Страйк минимальной суммарной внутренней стоимости опционов">Max Pain</th>
+                                <th title="Ожидаемое движение 1σ к экспирации: S·σ_ATM·√T">Exp. Move 1σ</th>
+                                <th title="25Δ Risk Reversal: IV(25Δ put) − IV(25Δ call), пункты волатильности. >0 — страх падения">Skew 25Δ</th>
                             </tr>
                             </thead>
                             <tbody>
                             @foreach (ExpirationAnalysis expData in Model.ExposureViewModel.ExpirationsData)
                             {
-                                // Calculate delta/gamma exposures
-                                double deltaExposure = -expData.OptionData.Sum(o =>
-                                    o.CallDelta * o.CallOi + o.PutDelta * o.PutOi);
-                                string deltaClass = deltaExposure >= 0 ? "text-success" : "text-danger";
-                                
-                                double gammaExposure = -expData.OptionData.Sum(o =>
-                                    o.CallGamma * o.CallOi + o.PutGamma * o.PutOi);
-                                
+                                // Знак DEX: >0 — продавец выигрывает от роста спота, <0 — от падения.
+                                string dexClass = expData.DollarDeltaExposure >= 0 ? "text-success" : "text-danger";
+                                // Знак Net GEX: >0 — стабилизирующий режим (дилеры гасят волу), <0 — усиливающий.
+                                string gexClass = expData.NetGammaExposure >= 0 ? "text-success" : "text-danger";
+
                                 // Determine gravity class
                                 string gravityClass = expData.GravityEquilibrium > expData.UnderlyingPrice ? "text-success" :
                                                     expData.GravityEquilibrium < expData.UnderlyingPrice ? "text-danger" : "text-muted";
@@ -98,10 +98,26 @@
                                         }
                                     </td>
                                     <td>
-                                        <span class="@deltaClass">@deltaExposure.ToString("N2")</span>
+                                        <span class="@dexClass">@expData.DollarDeltaExposure.ToString("N0")</span>
                                     </td>
                                     <td>
-                                        <span class="text-danger">@gammaExposure.ToString("N2")</span>
+                                        <span class="@gexClass">@expData.NetGammaExposure.ToString("N0")</span>
+                                    </td>
+                                    <td>@expData.MaxPain.ToString("N0")</td>
+                                    <td>
+                                        ± @expData.ExpectedMove1Sigma.ToString("N0")
+                                        <small class="text-muted">(@((expData.UnderlyingPrice > 0 ? expData.ExpectedMove1Sigma / expData.UnderlyingPrice * 100 : 0).ToString("N1"))%)</small>
+                                    </td>
+                                    <td>
+                                        @if (expData.RiskReversal25Delta == null)
+                                        {
+                                            <span class="text-muted">N/A</span>
+                                        }
+                                        else
+                                        {
+                                            string skewClass = expData.RiskReversal25Delta >= 0 ? "text-danger" : "text-success";
+                                            <span class="@skewClass">@expData.RiskReversal25Delta.Value.ToString("N2")</span>
+                                        }
                                     </td>
                                 </tr>
                             }

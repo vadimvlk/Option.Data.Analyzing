@@ -1,5 +1,6 @@
 ﻿using Option.Data.Database;
 using Option.Data.Ui.Models;
+using Option.Data.Ui.Services;
 using Option.Data.Shared.Dto;
 using Option.Data.Shared.Poco;
 using Microsoft.AspNetCore.Mvc;
@@ -87,6 +88,12 @@ public class ExposureModel(
                     // Calculate break-even points (upper and lower boundaries)
                     var boundaries = CalculateBreakEvenPoints(optionData, underlyingPrice);
 
+                    // Risk metrics (DEX / Net GEX / Max Pain / Expected Move / Skew).
+                    // T меряется от момента снимка (CreatedAt), а не от UtcNow, чтобы
+                    // исторические снимки давали корректное время до экспирации.
+                    double atmIv = OptionExposureMath.AtmIvFraction(optionData, underlyingPrice);
+                    double yearsToExpiry = OptionExposureMath.YearsToExpiry(expiration, ViewModel.SelectedDateTime);
+
                     ExposureViewModel.ExpirationsData.Add(new ExpirationAnalysis
                     {
                         UnderlyingPrice = underlyingPrice,
@@ -96,7 +103,12 @@ public class ExposureModel(
                         PutCenterOfGravity = putCog,
                         GravityEquilibrium = gravityEquilibrium,
                         UpperBoundary = boundaries.upperBoundary,
-                        LowerBoundary = boundaries.lowerBoundary
+                        LowerBoundary = boundaries.lowerBoundary,
+                        DollarDeltaExposure = OptionExposureMath.DollarDeltaExposure(optionData, underlyingPrice),
+                        NetGammaExposure = OptionExposureMath.NetGammaExposure(optionData, underlyingPrice),
+                        MaxPain = OptionExposureMath.MaxPain(optionData),
+                        ExpectedMove1Sigma = OptionExposureMath.ExpectedMove1Sigma(underlyingPrice, atmIv, yearsToExpiry),
+                        RiskReversal25Delta = OptionExposureMath.RiskReversal25Delta(optionData)
                     });
                 }
             }
