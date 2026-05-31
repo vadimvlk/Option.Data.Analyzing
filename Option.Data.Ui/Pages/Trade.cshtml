@@ -1,0 +1,507 @@
+@page
+@using System.Text
+@using System.Text.Json
+@using System.Globalization
+@using Option.Data.Ui.Models
+@using Option.Data.Ui.Services
+@inject IOptionsAnalysisHtmlBuilder HtmlBuilder;
+@model TradeModel
+@{
+    ViewData["Title"] = "Trade Plan";
+
+    static string BiasText(DirectionBias bias) => bias switch
+    {
+        DirectionBias.StrongUp => "Рост",
+        DirectionBias.ModerateUp => "Умеренно вверх",
+        DirectionBias.Neutral => "Нейтрально/флэт",
+        DirectionBias.ModerateDown => "Умеренно вниз",
+        DirectionBias.StrongDown => "Падение",
+        _ => "Нейтрально/флэт"
+    };
+
+    // Цвет бейджа направления: вверх — зелёный, вниз — красный, нейтрально — серый.
+    static string BiasBadgeClass(DirectionBias bias) => bias switch
+    {
+        DirectionBias.StrongUp or DirectionBias.ModerateUp => "bg-success",
+        DirectionBias.StrongDown or DirectionBias.ModerateDown => "bg-danger",
+        _ => "bg-secondary"
+    };
+
+    static string RegimeText(VolatilityRegime regime) => regime switch
+    {
+        VolatilityRegime.PositiveGamma => "+гамма: гашение волы / выкуп проливов",
+        VolatilityRegime.NegativeGamma => "−гамма: усиление движений / пробои",
+        _ => "Нейтральный режим"
+    };
+
+    static string RegimeBadgeClass(VolatilityRegime regime) => regime switch
+    {
+        VolatilityRegime.PositiveGamma => "bg-success",
+        VolatilityRegime.NegativeGamma => "bg-danger",
+        _ => "bg-secondary"
+    };
+
+    // Русское имя уровня для карты/таблицы.
+    static string LevelKindText(LevelKind kind) => kind switch
+    {
+        LevelKind.Spot => "Спот",
+        LevelKind.CallWall => "CALL-стена",
+        LevelKind.PutWall => "PUT-стена",
+        LevelKind.MaxPain => "Max Pain",
+        LevelKind.GravityEquilibrium => "Центр тяжести",
+        LevelKind.GammaFlip => "Gamma Flip",
+        LevelKind.GammaPeak => "Пик гаммы",
+        LevelKind.Sigma1Up => "+1σ",
+        LevelKind.Sigma1Down => "−1σ",
+        LevelKind.Sigma2Up => "+2σ",
+        LevelKind.Sigma2Down => "−2σ",
+        _ => kind.ToString()
+    };
+
+    // ---- Server-render SVG карты уровней (строится строкой, чтобы избежать
+    //      коллизии SVG <text> с управляющим тегом Razor) ----
+    static string BuildLevelMapSvg(SessionRecommendation r)
+    {
+        const double height = 520d;
+        const double width = 760d;
+        const double axisX = 96d;       // правый край ценовой шкалы
+        const double plotLeft = 110d;   // начало области уровней
+        const double plotRight = 720d;  // конец области уровней
+
+        double axisMin = r.Range.Lower2 * 0.99;
+        double axisMax = r.Range.Upper2 * 1.01;
+        double span = axisMax - axisMin;
+        if (span <= 0)
+        {
+            span = Math.Max(r.Spot, 1) * 0.04;
+            axisMin = r.Spot - span / 2;
+            axisMax = axisMin + span;
+        }
+
+        // Маппинг цены в Y: y = height*(1 - (price-min)/(max-min)).
+        double Y(double price) => height * (1 - (price - axisMin) / span);
+        string F(double v) => v.ToString("F1", CultureInfo.InvariantCulture);
+        string N2(double v) => v.ToString("N2", CultureInfo.CurrentCulture);
+        string Pct(double v) => v.ToString("+0.0;-0.0", CultureInfo.CurrentCulture);
+        string Esc(string s) => System.Net.WebUtility.HtmlEncode(s);
+
+        StringBuilder sb = new();
+        sb.Append($"<svg viewBox=\"0 0 {F(width)} {F(height)}\" width=\"100%\" role=\"img\" ")
+          .Append("aria-label=\"Карта ценовых уровней\" ")
+          .Append("style=\"max-width:100%;height:auto;font-family:sans-serif;\">");
+
+        // фон области
+        sb.Append($"<rect x=\"{F(plotLeft)}\" y=\"0\" width=\"{F(plotRight - plotLeft)}\" height=\"{F(height)}\" fill=\"#fbfbfc\" stroke=\"#e5e7eb\"/>");
+
+        // ценовая шкала (5 делений)
+        for (int i = 0; i <= 5; i++)
+        {
+            double tick = axisMin + span * i / 5d;
+            double ty = Y(tick);
+            sb.Append($"<line x1=\"{F(plotLeft)}\" y1=\"{F(ty)}\" x2=\"{F(plotRight)}\" y2=\"{F(ty)}\" stroke=\"#eef0f2\" stroke-width=\"1\"/>");
+            sb.Append($"<text x=\"{F(axisX)}\" y=\"{F(ty + 4)}\" text-anchor=\"end\" font-size=\"11\" fill=\"#6b7280\">{Esc(tick.ToString("N0", CultureInfo.CurrentCulture))}</text>");
+        }
+
+        // уровни
+        foreach (PriceLevel lvl in r.Levels)
+        {
+            if (lvl.Kind == LevelKind.Spot) continue;
+            if (lvl.Price < axisMin || lvl.Price > axisMax) continue;
+
+            double y = Y(lvl.Price);
+            string oi = lvl.OpenInterest.HasValue ? $" · OI {lvl.OpenInterest.Value.ToString("N0", CultureInfo.CurrentCulture)}" : "";
+            string kindLabel = LevelKindText(lvl.Kind);
+
+            switch (lvl.Kind)
+            {
+                case LevelKind.CallWall:
+                    sb.Append($"<rect x=\"{F(plotLeft)}\" y=\"{F(y - 7)}\" width=\"{F(plotRight - plotLeft)}\" height=\"14\" fill=\"rgba(220,53,69,0.18)\"/>");
+                    sb.Append($"<line x1=\"{F(plotLeft)}\" y1=\"{F(y)}\" x2=\"{F(plotRight)}\" y2=\"{F(y)}\" stroke=\"#dc3545\" stroke-width=\"2\"/>");
+                    sb.Append($"<text x=\"{F(plotLeft + 6)}\" y=\"{F(y - 9)}\" font-size=\"11\" fill=\"#dc3545\" font-weight=\"600\">{Esc($"{kindLabel} · {N2(lvl.Price)} · {lvl.Role}{oi}")}</text>");
+                    break;
+                case LevelKind.PutWall:
+                    sb.Append($"<rect x=\"{F(plotLeft)}\" y=\"{F(y - 7)}\" width=\"{F(plotRight - plotLeft)}\" height=\"14\" fill=\"rgba(25,135,84,0.18)\"/>");
+                    sb.Append($"<line x1=\"{F(plotLeft)}\" y1=\"{F(y)}\" x2=\"{F(plotRight)}\" y2=\"{F(y)}\" stroke=\"#198754\" stroke-width=\"2\"/>");
+                    sb.Append($"<text x=\"{F(plotLeft + 6)}\" y=\"{F(y + 16)}\" font-size=\"11\" fill=\"#198754\" font-weight=\"600\">{Esc($"{kindLabel} · {N2(lvl.Price)} · {lvl.Role}{oi}")}</text>");
+                    break;
+                case LevelKind.MaxPain:
+                case LevelKind.GravityEquilibrium:
+                    sb.Append($"<line x1=\"{F(plotLeft)}\" y1=\"{F(y)}\" x2=\"{F(plotRight)}\" y2=\"{F(y)}\" stroke=\"#a855f7\" stroke-width=\"1.5\" stroke-dasharray=\"6 4\"/>");
+                    sb.Append($"<text x=\"{F(plotRight - 6)}\" y=\"{F(y - 4)}\" text-anchor=\"end\" font-size=\"11\" fill=\"#7e22ce\">{Esc($"{kindLabel} · {N2(lvl.Price)} · магнит ({Pct(lvl.DistancePercent)}%)")}</text>");
+                    break;
+                case LevelKind.GammaFlip:
+                    sb.Append($"<line x1=\"{F(plotLeft)}\" y1=\"{F(y)}\" x2=\"{F(plotRight)}\" y2=\"{F(y)}\" stroke=\"#0d6efd\" stroke-width=\"1.5\" stroke-dasharray=\"4 4\"/>");
+                    sb.Append($"<text x=\"{F(plotRight - 6)}\" y=\"{F(y + 14)}\" text-anchor=\"end\" font-size=\"11\" fill=\"#0d6efd\">{Esc($"{kindLabel} · {N2(lvl.Price)} · пивот ({Pct(lvl.DistancePercent)}%)")}</text>");
+                    break;
+                default:
+                    // σ-границы и прочие тонкие линии
+                    sb.Append($"<line x1=\"{F(plotLeft)}\" y1=\"{F(y)}\" x2=\"{F(plotRight)}\" y2=\"{F(y)}\" stroke=\"#9ca3af\" stroke-width=\"0.75\" stroke-dasharray=\"2 3\"/>");
+                    sb.Append($"<text x=\"{F(plotLeft + 6)}\" y=\"{F(y - 3)}\" font-size=\"10\" fill=\"#6b7280\">{Esc($"{kindLabel} · {N2(lvl.Price)}")}</text>");
+                    break;
+            }
+        }
+
+        // спот: заметный маркер
+        double spotY = Y(r.Spot);
+        sb.Append($"<line x1=\"{F(plotLeft)}\" y1=\"{F(spotY)}\" x2=\"{F(plotRight)}\" y2=\"{F(spotY)}\" stroke=\"#111827\" stroke-width=\"2.5\"/>");
+        sb.Append($"<circle cx=\"{F(plotLeft)}\" cy=\"{F(spotY)}\" r=\"5\" fill=\"#111827\"/>");
+        sb.Append($"<rect x=\"{F(plotRight - 150)}\" y=\"{F(spotY - 22)}\" width=\"146\" height=\"18\" rx=\"3\" fill=\"#111827\"/>");
+        sb.Append($"<text x=\"{F(plotRight - 77)}\" y=\"{F(spotY - 9)}\" text-anchor=\"middle\" font-size=\"11\" fill=\"#ffffff\" font-weight=\"700\">{Esc($"СПОТ {N2(r.Spot)}")}</text>");
+
+        sb.Append("</svg>");
+        return sb.ToString();
+    }
+}
+
+<div class="container">
+    <h2>Trade Plan — план на сессию</h2>
+
+    <partial name="_BaseOptionForm" model="Model"/>
+
+    @if (Model.Recommendation != null)
+    {
+        SessionRecommendation rec = Model.Recommendation;
+        SessionRange range = rec.Range;
+
+        <!-- ================= 1. ВЕРДИКТ ================= -->
+        <article class="mb-4">
+            <header>
+                <div class="d-flex flex-wrap justify-content-between align-items-baseline">
+                    <h3 class="mb-1">@rec.Currency — спот @rec.Spot.ToString("N2")</h3>
+                    <span class="text-muted">
+                        до экспирации фронта @rec.HoursToFrontExpiry.ToString("N1") ч · @rec.FrontExpiration
+                    </span>
+                </div>
+            </header>
+
+            <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+                <span class="badge @BiasBadgeClass(rec.Bias) fs-6">
+                    Направление: @BiasText(rec.Bias)
+                </span>
+                <span class="badge @RegimeBadgeClass(rec.Regime) fs-6">
+                    Режим: @RegimeText(rec.Regime)
+                </span>
+            </div>
+
+            <div class="grid">
+                <div>
+                    <strong>Диапазон 1σ (сессия):</strong>
+                    <span class="text-danger">@range.Lower1.ToString("N2")</span>
+                    …
+                    <span class="text-success">@range.Upper1.ToString("N2")</span>
+                </div>
+                <div>
+                    <strong>Диапазон 2σ (сессия):</strong>
+                    <span class="text-danger">@range.Lower2.ToString("N2")</span>
+                    …
+                    <span class="text-success">@range.Upper2.ToString("N2")</span>
+                </div>
+            </div>
+            <small class="text-muted d-block mt-1">
+                Диапазон рассчитан на текущую сессию (до ближайшего сброса 08:00 UTC), σ_ATM фронта
+                @range.AtmIvPercent.ToString("N1")% годовых. «До экспирации фронта» в шапке — отдельный, более длинный горизонт.
+            </small>
+        </article>
+
+        <div class="grid">
+            <!-- ================= 2/3. КАРТА УРОВНЕЙ + СПИСОК ================= -->
+            <div>
+                <article>
+                    <header><strong>Карта уровней</strong></header>
+                    @Html.Raw(BuildLevelMapSvg(rec))
+                </article>
+
+                <!-- 7. Компактная таблица уровней -->
+                <article>
+                    <header><strong>Уровни</strong></header>
+                    <div class="overflow-auto">
+                        <table class="table table-sm table-bordered table-hover mb-0">
+                            <thead>
+                            <tr>
+                                <th>Уровень</th>
+                                <th>Роль</th>
+                                <th class="text-end">Цена</th>
+                                <th class="text-end">Откл.%</th>
+                                <th class="text-end">OI</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            @foreach (PriceLevel lvl in rec.Levels)
+                            {
+                                string distClass = lvl.DistancePercent > 0 ? "text-success"
+                                    : lvl.DistancePercent < 0 ? "text-danger" : "text-muted";
+                                <tr>
+                                    <td>@LevelKindText(lvl.Kind)</td>
+                                    <td>@lvl.Role</td>
+                                    <td class="text-end">@lvl.Price.ToString("N2")</td>
+                                    <td class="text-end @distClass">@lvl.DistancePercent.ToString("+0.00;-0.00;0.00")</td>
+                                    <td class="text-end">
+                                        @(lvl.OpenInterest.HasValue ? lvl.OpenInterest.Value.ToString("N0") : "—")
+                                    </td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </div>
+                </article>
+            </div>
+
+            <!-- ================= 4. ПРОФИЛЬ ГАММЫ ================= -->
+            <div>
+                <article>
+                    <header>
+                        <strong>Профиль гаммы (Net GEX, USD/1%)</strong>
+                    </header>
+                    @if (rec.GammaProfile.Any())
+                    {
+                        <canvas id="gammaChart" height="120"></canvas>
+                        <small class="text-muted d-block mt-2">
+                            Net GEX у спота:
+                            <span class="@(rec.NetGexAtSpot >= 0 ? "text-success" : "text-danger")">
+                                @rec.NetGexAtSpot.ToString("N0")
+                            </span>
+                            @if (rec.GammaFlip.HasValue)
+                            {
+                                @:· Gamma Flip: @rec.GammaFlip.Value.ToString("N2")
+                            }
+                        </small>
+
+                        <script id="gamma-data" type="application/json">
+                            @Html.Raw(JsonSerializer.Serialize(new
+                                     {
+                                         points = rec.GammaProfile.Select(p => new { x = p.Price, y = p.NetGex }).ToList(),
+                                         spot = rec.Spot,
+                                         flip = rec.GammaFlip
+                                     }))
+                        </script>
+                    }
+                    else
+                    {
+                        <p class="text-muted">Недостаточно данных для построения профиля гаммы.</p>
+                    }
+                </article>
+
+                <!-- 6. ПОЧЕМУ -->
+                <article>
+                    <header><strong>Почему</strong></header>
+                    <div class="overflow-auto">
+                        <table class="table table-sm table-bordered table-hover mb-0">
+                            <thead>
+                            <tr>
+                                <th>Сигнал</th>
+                                <th class="text-end">Значение</th>
+                                <th class="text-end">Нормировка</th>
+                                <th class="text-end">Вес</th>
+                                <th class="text-end">Вклад</th>
+                                <th>Пояснение</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            @foreach (BiasComponent comp in rec.BiasComponents)
+                            {
+                                string normClass = comp.Normalized > 0 ? "text-success"
+                                    : comp.Normalized < 0 ? "text-danger" : "text-muted";
+                                string contribClass = comp.Contribution > 0 ? "text-success"
+                                    : comp.Contribution < 0 ? "text-danger" : "text-muted";
+                                <tr>
+                                    <td>@comp.Name</td>
+                                    <td class="text-end">@comp.RawValue.ToString("N2")</td>
+                                    <td class="text-end @normClass">@comp.Normalized.ToString("N2")</td>
+                                    <td class="text-end">@(comp.Weight > 0 ? comp.Weight.ToString("N2") : "модиф.")</td>
+                                    <td class="text-end @contribClass">@comp.Contribution.ToString("N2")</td>
+                                    <td><small>@comp.Explanation</small></td>
+                                </tr>
+                            }
+                            </tbody>
+                            <tfoot>
+                            <tr>
+                                <th colspan="4" class="text-end">Итог (BiasScore):</th>
+                                <th class="text-end @(rec.BiasScore > 0 ? "text-success" : rec.BiasScore < 0 ? "text-danger" : "text-muted")">
+                                    @rec.BiasScore.ToString("N2")
+                                </th>
+                                <th>
+                                    <span class="badge @BiasBadgeClass(rec.Bias)">@BiasText(rec.Bias)</span>
+                                </th>
+                            </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                </article>
+            </div>
+        </div>
+
+        <!-- ================= 5. ПЛАН (сценарии) ================= -->
+        <h4 class="mt-4">План</h4>
+        <div class="grid">
+            @foreach (Scenario sc in rec.Scenarios.OrderBy(s => s.Kind switch
+                     {
+                         ScenarioKind.Base => 0,
+                         ScenarioKind.Bullish => 1,
+                         _ => 2
+                     }))
+            {
+                string borderClass = sc.Kind switch
+                {
+                    ScenarioKind.Bullish => "border-success",
+                    ScenarioKind.Bearish => "border-danger",
+                    _ => "border-primary"
+                };
+                string headClass = sc.Kind switch
+                {
+                    ScenarioKind.Bullish => "text-success",
+                    ScenarioKind.Bearish => "text-danger",
+                    _ => "text-primary"
+                };
+                <div>
+                    <article class="border @borderClass" style="border-width:2px !important;">
+                        <header class="@headClass"><strong>@sc.Title</strong></header>
+                        <p class="mb-1"><strong>Триггер:</strong> @sc.Trigger</p>
+                        <p class="mb-1">
+                            <strong>Цели:</strong>
+                            @(sc.Targets.Any() ? string.Join(", ", sc.Targets.Select(t => t.ToString("N2"))) : "—")
+                        </p>
+                        <p class="mb-1">
+                            <strong>Стоп:</strong>
+                            @(sc.Stop.HasValue ? sc.Stop.Value.ToString("N2") : "—")
+                        </p>
+                        <p class="mb-1"><strong>Действие:</strong> @sc.Action</p>
+                        <p class="mb-1"><small class="text-muted">@sc.Reason</small></p>
+                        <p class="mb-0">
+                            <strong>Вероятность:</strong> @((sc.Probability * 100).ToString("N0"))%
+                        </p>
+                    </article>
+                </div>
+            }
+        </div>
+
+        <!-- ================= 8. МАКРО-КОНТЕКСТ + NOTES ================= -->
+        @if (rec.MacroContext.Any())
+        {
+            <div class="alert alert-info mt-4" role="alert">
+                <strong>Макро-контекст</strong>
+                <ul class="mb-0">
+                    @foreach (string line in rec.MacroContext)
+                    {
+                        <li>@line</li>
+                    }
+                </ul>
+            </div>
+        }
+
+        @if (rec.Notes.Any())
+        {
+            <div class="alert alert-warning" role="alert">
+                <strong>Замечания</strong>
+                <ul class="mb-0">
+                    @foreach (string note in rec.Notes)
+                    {
+                        <li>@note</li>
+                    }
+                </ul>
+            </div>
+        }
+
+        <!-- ================= 9. ДЕТАЛИ ФРОНТА ================= -->
+        <details class="mt-4">
+            <summary>Детали фронта (@rec.FrontExpiration)</summary>
+            <div class="option-analysis-container mt-3">
+                <h4>Call/Put Ratio</h4>
+                @Html.Raw(HtmlBuilder.CalculateCallPutRatioHtml(rec.FrontChain))
+                <h4>Open Interest</h4>
+                @Html.Raw(HtmlBuilder.AnalyzeOpenInterestHtml(rec.FrontChain))
+            </div>
+        </details>
+
+        <!-- ================= 10. МЕТОДИЧКА ================= -->
+        <p class="mt-3">
+            <small class="text-muted">
+                «Объём» здесь = открытый интерес (OI). Расчёт основан на позиционировании опционов
+                и не является инвестиционной рекомендацией.
+            </small>
+        </p>
+    }
+    else
+    {
+        <div class="option-data-container">
+            <h4>Trade Plan</h4>
+            <p>Нет данных. Выберите валюту и дату снимка, затем нажмите «Load Data».</p>
+        </div>
+    }
+</div>
+
+@section Scripts {
+    @if (Model.Recommendation != null && Model.Recommendation.GammaProfile.Any())
+    {
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <script>
+            (function () {
+                const payload = JSON.parse(document.getElementById('gamma-data').textContent);
+
+                // Вертикальная отметка спота: отдельный dataset из двух точек по Y-экстремумам.
+                const ys = payload.points.map(p => p.y);
+                const yMin = Math.min.apply(null, ys);
+                const yMax = Math.max.apply(null, ys);
+
+                const datasets = [{
+                    label: 'Net GEX (USD/1%)',
+                    data: payload.points,
+                    parsing: false,
+                    borderColor: '#4361ee',
+                    backgroundColor: 'rgba(67,97,238,0.1)',
+                    borderWidth: 1.75,
+                    pointRadius: 0,
+                    tension: 0.15,
+                    fill: false
+                }, {
+                    label: 'Спот',
+                    data: [{ x: payload.spot, y: yMin }, { x: payload.spot, y: yMax }],
+                    parsing: false,
+                    borderColor: '#111827',
+                    borderWidth: 1.5,
+                    borderDash: [4, 4],
+                    pointRadius: 0,
+                    tension: 0,
+                    fill: false
+                }];
+
+                if (payload.flip !== null && payload.flip !== undefined) {
+                    datasets.push({
+                        label: 'Gamma Flip',
+                        data: [{ x: payload.flip, y: yMin }, { x: payload.flip, y: yMax }],
+                        parsing: false,
+                        borderColor: '#dc3545',
+                        borderWidth: 1.25,
+                        borderDash: [2, 3],
+                        pointRadius: 0,
+                        tension: 0,
+                        fill: false
+                    });
+                }
+
+                new Chart(document.getElementById('gammaChart'), {
+                    type: 'line',
+                    data: { datasets: datasets },
+                    options: {
+                        responsive: true,
+                        interaction: { mode: 'nearest', intersect: false },
+                        scales: {
+                            x: {
+                                type: 'linear',
+                                title: { display: true, text: 'Цена' }
+                            },
+                            y: {
+                                beginAtZero: false,
+                                title: { display: true, text: 'Net GEX' },
+                                grid: {
+                                    // Нулевая линия выделена (точка flip — там, где профиль пересекает 0).
+                                    color: (ctx) => ctx.tick.value === 0 ? '#198754' : 'rgba(0,0,0,0.08)',
+                                    lineWidth: (ctx) => ctx.tick.value === 0 ? 1.75 : 1
+                                }
+                            }
+                        }
+                    }
+                });
+            })();
+        </script>
+    }
+}
