@@ -400,7 +400,7 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
             RawValue = pinRaw,
             Normalized = pin,
             Weight = WeightPinBase * pf,
-            Explanation = $"потому что Max Pain фронта {Fmt(front.MaxPain)} {Direction(pinRaw)} спота {Fmt(spot)} " +
+            Explanation = $"Max Pain фронта {Fmt(front.MaxPain)} {Direction(pinRaw)} спота {Fmt(spot)} " +
                           $"на {Fmt(Math.Abs(pinRaw))} (≈{pin:+0.00;-0.00;0.00}σ); вес усилен близостью экспирации (DTE {frontDte:0.0})."
         });
 
@@ -415,7 +415,7 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
             RawValue = gravityRaw,
             Normalized = gravity,
             Weight = WeightGravity,
-            Explanation = $"потому что центр тяжести близких {Fmt(gravityNear)} {Direction(gravityRaw)} спота " +
+            Explanation = $"центр тяжести близких {Fmt(gravityNear)} {Direction(gravityRaw)} спота " +
                           $"на {Fmt(Math.Abs(gravityRaw))} (≈{gravity:+0.00;-0.00;0.00}σ)."
         });
 
@@ -433,7 +433,7 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
             RawValue = dexRaw,
             Normalized = dex,
             Weight = WeightDex,
-            Explanation = $"потому что суммарная DEX близких {FmtUsd(dexNear)} → {(dex >= 0 ? "бычий" : "медвежий")} тилт " +
+            Explanation = $"суммарная DEX близких {FmtUsd(dexNear)} → {(dex >= 0 ? "бычий" : "медвежий")} тилт " +
                           $"позиционирования (нормирована к спот·OI)."
         });
 
@@ -454,7 +454,7 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
                 RawValue = rrAvg,
                 Normalized = skew,
                 Weight = WeightSkew,
-                Explanation = $"потому что 25Δ Risk Reversal {rrAvg:+0.0;-0.0;0.0} п.в. — " +
+                Explanation = $"25Δ Risk Reversal {rrAvg:+0.0;-0.0;0.0} п.в. — " +
                               (rrAvg > 0
                                   ? "путы дороже коллов (спрос на защиту вниз), медвежий риск."
                                   : "коллы дороже путов (жадность), бычий риск.")
@@ -493,7 +493,7 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
                 Normalized = sign,
                 Weight = 0,
                 Contribution = NegativeGammaMomentum * sign,
-                Explanation = $"потому что режим отрицательной гаммы усиливает движение: спот {Fmt(spot)} " +
+                Explanation = $"режим отрицательной гаммы усиливает движение: спот {Fmt(spot)} " +
                               $"{(sign >= 0 ? "выше" : "ниже")} gamma-flip {Fmt(flip)} → импульс {(sign >= 0 ? "вверх" : "вниз")}."
             });
         }
@@ -541,7 +541,7 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
                 Targets = [magnet],
                 Stop = null,
                 Action = $"Фейдить края {Fmt(lower1)}…{Fmt(upper1)} к магниту {Fmt(magnet)}",
-                Reason = $"потому что положительная гамма (Net GEX {FmtUsd(rec.NetGexAtSpot)}/1%) — " +
+                Reason = $"положительная гамма (Net GEX {FmtUsd(rec.NetGexAtSpot)}/1%) — " +
                          $"дилеры гасят волатильность, цену тянет к {Fmt(magnet)}.",
                 Probability = 0.55
             };
@@ -557,7 +557,7 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
                 // Стоп за противоположным краем диапазона (на защитной стороне относительно смещения).
                 Stop = rec.BiasScore >= 0 ? lower1 : upper1,
                 Action = "Входить по пробою в сторону смещения, не ловить ножи",
-                Reason = $"потому что отрицательная гамма (Net GEX {FmtUsd(rec.NetGexAtSpot)}/1%) — " +
+                Reason = $"отрицательная гамма (Net GEX {FmtUsd(rec.NetGexAtSpot)}/1%) — " +
                          $"дилеры усиливают движения, склонность к пробою в сторону {BiasText(rec.Bias)}.",
                 Probability = 0.50
             };
@@ -572,7 +572,7 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
                 Targets = [magnet],
                 Stop = null,
                 Action = "Ждать подтверждения у границ диапазона",
-                Reason = $"потому что Net GEX у спота близок к нулю ({FmtUsd(rec.NetGexAtSpot)}/1%) — " +
+                Reason = $"Net GEX у спота близок к нулю ({FmtUsd(rec.NetGexAtSpot)}/1%) — " +
                          "чёткого режима нет.",
                 Probability = 0.45
             };
@@ -602,7 +602,7 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
                 Targets = DirectionalTargets([magnet, upper1], entry, +1, spot, sigma),
                 Stop = entry - stopBuffer,
                 Action = $"Покупать у поддержки {Fmt(entry)} (фейд края)",
-                Reason = $"потому что в положительной гамме откаты к {Fmt(entry)} выкупаются к магниту {Fmt(magnet)}.",
+                Reason = $"в положительной гамме откаты к {Fmt(entry)} выкупаются к магниту {Fmt(magnet)}.",
                 Probability = rec.BiasScore >= 0 ? 0.45 : 0.30
             });
         }
@@ -617,7 +617,7 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
                 Targets = DirectionalTargets(upLevels, trigger, +1, spot, sigma),
                 Stop = trigger - stopBuffer,
                 Action = $"Покупать по пробою вверх выше {Fmt(trigger)}",
-                Reason = $"потому что пробой {Fmt(trigger)} в отрицательной гамме провоцирует ускорение вверх." +
+                Reason = $"пробой {Fmt(trigger)} в отрицательной гамме провоцирует ускорение вверх." +
                          FlipContinuation(gammaFlip, trigger, +1, spot),
                 Probability = rec.BiasScore >= 0 ? 0.45 : 0.30
             });
@@ -636,7 +636,7 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
                 Targets = DirectionalTargets([magnet, lower1], entry, -1, spot, sigma),
                 Stop = entry + stopBuffer,
                 Action = $"Продавать у сопротивления {Fmt(entry)} (фейд края)",
-                Reason = $"потому что в положительной гамме отскоки к {Fmt(entry)} продаются к магниту {Fmt(magnet)}.",
+                Reason = $"в положительной гамме отскоки к {Fmt(entry)} продаются к магниту {Fmt(magnet)}.",
                 Probability = rec.BiasScore < 0 ? 0.45 : 0.30
             });
         }
@@ -651,7 +651,7 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
                 Targets = DirectionalTargets(downLevels, trigger, -1, spot, sigma),
                 Stop = trigger + stopBuffer,
                 Action = $"Продавать по пробою вниз ниже {Fmt(trigger)}",
-                Reason = $"потому что пробой {Fmt(trigger)} в отрицательной гамме провоцирует ускорение вниз." +
+                Reason = $"пробой {Fmt(trigger)} в отрицательной гамме провоцирует ускорение вниз." +
                          FlipContinuation(gammaFlip, trigger, -1, spot),
                 Probability = rec.BiasScore < 0 ? 0.45 : 0.30
             });
