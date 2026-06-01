@@ -14,7 +14,21 @@ public class ExpirationAnalysis
     public List<OptionData> OptionData { get; set; } = new();
     public double CallCenterOfGravity { get; set; }
     public double PutCenterOfGravity { get; set; }
+
+    /// <summary>
+    /// «Равновесная цена» = среднее Call- и Put-центров (callCog+putCog)/2.
+    /// Используется на странице Exposure. НЕ путать с <see cref="OiCentroid"/>.
+    /// </summary>
     public double GravityEquilibrium { get; set; }
+
+    /// <summary>
+    /// OI-взвешенный центр тяжести всей цепочки Σ(K·(CallOi+PutOi))/Σ(CallOi+PutOi) —
+    /// «магнит» цены с учётом фактического распределения открытого интереса (в отличие от
+    /// <see cref="GravityEquilibrium"/>, который усредняет два центра 50/50). 0 — недоступен
+    /// (нулевой суммарный OI). Используется как магнит на странице Trade.
+    /// </summary>
+    public double OiCentroid { get; set; }
+
     public double? UpperBoundary { get; set; }
     public double? LowerBoundary { get; set; }
 

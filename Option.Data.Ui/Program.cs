@@ -30,6 +30,8 @@ builder.AddDeribitClientConfiguration();
 
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IOptionsAnalysisHtmlBuilder, OptionsAnalysisHtmlBuilder>();
+builder.Services.AddSingleton<IExpirationAnalysisBuilder, ExpirationAnalysisBuilder>();
+builder.Services.AddSingleton<ISessionRecommendationBuilder, SessionRecommendationBuilder>();
 var app = builder.Build();
 
 ForwardedHeadersOptions options = new ()

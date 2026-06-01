@@ -18,6 +18,14 @@ public record OptionData
     public double Iv { get; set; }
 
     /// <summary>
+    /// Подразумеваемая волатильность (mark_iv) Put-строки страйка. Нужна для корректной
+    /// put-ветви 25Δ Risk Reversal (см. <c>OptionExposureMath.RiskReversal25Delta</c>):
+    /// put-нога скоса должна считаться по собственной put-IV, а не по call-IV.
+    /// 0, если put-строки нет или греки/IV занулены (страница Snapshot).
+    /// </summary>
+    public double PutIv { get; set; }
+
+    /// <summary>
     ///  Открытые позиции Put.
     /// </summary>
     public double PutOi { get; set; }
