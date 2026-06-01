@@ -31,24 +31,37 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
     /// <summary>Допуск дедупликации уровней по цене, % от спота.</summary>
     private const double LevelDedupPercent = 0.1;
 
-    // --- Веса скоринга направления (раздел 8). КАЛИБРУЕМО. ---
-    /// <summary>Базовый вес пиннинга к Max Pain; домножается на прокси-фактор близости экспирации. КАЛИБРУЕМО.</summary>
-    private const double WeightPinBase = 0.30;
-
-    /// <summary>Вес тяги к центру тяжести близких экспираций. КАЛИБРУЕМО.</summary>
-    private const double WeightGravity = 0.20;
+    // --- Веса скоринга направления. pin+gravity объединены в один «Магнит». КАЛИБРУЕМО. ---
+    /// <summary>Вес объединённого магнитного сигнала (Max Pain + OI-центроид); ×pf близости. КАЛИБРУЕМО.</summary>
+    private const double WeightMagnet = 0.30;
 
     /// <summary>Вес долларовой дельта-экспозиции (DEX). КАЛИБРУЕМО.</summary>
-    private const double WeightDex = 0.20;
+    private const double WeightDex = 0.30;
 
     /// <summary>Вес скоса (25Δ Risk Reversal). КАЛИБРУЕМО.</summary>
-    private const double WeightSkew = 0.20;
+    private const double WeightSkew = 0.40;
 
     /// <summary>Добавка к B за импульс при отрицательной гамме относительно gamma-flip. КАЛИБРУЕМО.</summary>
     private const double NegativeGammaMomentum = 0.15;
 
     /// <summary>Нормировочный делитель скоса (RR в пунктах волатильности). КАЛИБРУЕМО.</summary>
     private const double SkewNormalizer = 5.0;
+
+    /// <summary>Пол масштаба нормировки магнита: доля спота (не даёт насытиться на однодневных фронтах). КАЛИБРУЕМО.</summary>
+    private const double MagnetScaleFloorPct = 0.01;
+
+    // --- Параметры главной рекомендации (раздел B спека). КАЛИБРУЕМО. ---
+    /// <summary>Минимальная конвикция (0..100), ниже — ВНЕ РЫНКА. КАЛИБРУЕМО.</summary>
+    private const int ConvictionMin = 30;
+
+    /// <summary>Порог |BiasScore| для ВНЕ РЫНКА (нет внятного смещения). КАЛИБРУЕМО.</summary>
+    private const double StandAsideBiasMin = 0.15;
+
+    /// <summary>Близость спота к gamma-flip (в долях σ), при которой режим неустойчив → ВНЕ РЫНКА. КАЛИБРУЕМО.</summary>
+    private const double FlipProximitySigma = 0.25;
+
+    /// <summary>Полуширина зоны входа в долях σ. КАЛИБРУЕМО.</summary>
+    private const double EntryZoneSigma = 0.15;
 
     public SessionRecommendation Build(
         IReadOnlyList<ExpirationAnalysis> analyses,
@@ -148,7 +161,9 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
         }
 
         // --- Сессия и диапазон ---
-        double sessionYears = ComputeSessionYears();
+        // sessionYears считается от asOf (момент снимка), а не от UtcNow — согласовано с DTE и
+        // T гамма-профиля того же снимка (важно при просмотре исторических снимков).
+        double sessionYears = ComputeSessionYears(asOf);
         double atmIv = OptionExposureMath.AtmIvFraction(front.OptionData, spot);
         double dailySigma1 = SessionAnalysisMath.DailyExpectedMove(spot, atmIv, sessionYears);
 
@@ -171,17 +186,29 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
         OptionData? callWall = SessionAnalysisMath.CallWall(nearChain, spot);
         OptionData? putWall = SessionAnalysisMath.PutWall(nearChain, spot);
 
-        // --- Центр тяжести близких: среднее центров, взвешенное по суммарному OI экспирации ---
-        double gravityNear = WeightedGravityEquilibrium(near, front.GravityEquilibrium);
+        // --- Магнит близких: OI-взвешенный центроид цепочки (с учётом дисбаланса OI) ---
+        double centroidNear = WeightedOiCentroid(near, front.OiCentroid > 0 ? front.OiCentroid : front.MaxPain);
+
+        // Первичный магнит-цель сессии: Max Pain фронта (пиннинг); OI-центроид — контекст/фолбэк.
+        double primaryMagnet = front.MaxPain > 0 ? front.MaxPain : centroidNear;
 
         // --- Уровни ---
-        rec.Levels = BuildLevels(rec, spot, callWall, putWall, front.MaxPain, gravityNear, gammaFlip);
+        rec.Levels = BuildLevels(rec, spot, callWall, putWall, front.MaxPain, centroidNear, gammaFlip);
 
         // --- Скоринг направления ---
-        ScoreDirection(rec, spot, dailySigma1, front, near, gravityNear, gammaFlip, frontDte, gammaModelsDisagree);
+        ScoreDirection(rec, spot, dailySigma1, front, near, centroidNear, gammaFlip, frontDte, gammaModelsDisagree);
 
-        // --- Сценарии ---
-        rec.Scenarios = BuildScenarios(rec, spot, callWall, putWall, front.MaxPain, gravityNear, gammaFlip);
+        // --- Конвикция и главная сделка сессии ---
+        double regimeClarity = profilePeak > 0
+            ? SessionAnalysisMath.Clamp(Math.Abs(netGexAtSpot) / profilePeak, 0, 1)
+            : 0;
+        double agreement = SignAgreement(rec.BiasComponents, rec.BiasScore);
+        int conviction = (int)Math.Round(100 * Math.Abs(rec.BiasScore) * agreement * regimeClarity);
+        rec.Primary = BuildPrimaryTrade(rec, spot, callWall, putWall, primaryMagnet, gammaFlip,
+            conviction, gammaModelsDisagree);
+
+        // --- Сценарии (вторично, под сворачиваемым блоком на странице) ---
+        rec.Scenarios = BuildScenarios(rec, spot, callWall, putWall, front.MaxPain, centroidNear, gammaFlip);
 
         // --- Макро-контекст и заметки ---
         rec.MacroContext = BuildMacroContext(withDte);
@@ -260,25 +287,26 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
     }
 
     /// <summary>
-    /// Центр тяжести близких — среднее <see cref="ExpirationAnalysis.GravityEquilibrium"/>,
-    /// взвешенное по суммарному OI каждой экспирации. Если веса нулевые — возврат фолбэка фронта.
+    /// Магнит близких — OI-взвешенный центроид <see cref="ExpirationAnalysis.OiCentroid"/>,
+    /// взвешенный по суммарному OI каждой экспирации (= центроид агрегированной близкой
+    /// цепочки). Недоступные центроиды (≤0) и нулевые веса пропускаются; при отсутствии — фолбэк.
     /// </summary>
-    private static double WeightedGravityEquilibrium(IReadOnlyList<ExpiryView> near, double fallback)
+    private static double WeightedOiCentroid(IReadOnlyList<ExpiryView> near, double fallback)
     {
         double weightedSum = 0;
         double totalWeight = 0;
 
         foreach (ExpiryView v in near)
         {
-            double ge = v.Analysis.GravityEquilibrium;
-            if (ge <= 0 || !double.IsFinite(ge))
+            double c = v.Analysis.OiCentroid;
+            if (c <= 0 || !double.IsFinite(c))
                 continue;
 
             double w = TotalOi(v.Analysis.OptionData);
             if (w <= 0)
                 continue;
 
-            weightedSum += ge * w;
+            weightedSum += c * w;
             totalWeight += w;
         }
 
@@ -289,10 +317,192 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
         return double.IsFinite(result) ? result : fallback;
     }
 
-    /// <summary>Доля года до следующего сброса 08:00 UTC от текущего момента, минимум 1 час.</summary>
-    private static double ComputeSessionYears()
+    /// <summary>
+    /// Доля компонентов скоринга, чей знак <see cref="BiasComponent.Normalized"/> совпадает
+    /// со знаком итогового <paramref name="biasScore"/> (компоненты с |Normalized|≈0 не учитываются).
+    /// 0..1 — мера согласованности сигналов для расчёта конвикции.
+    /// </summary>
+    private static double SignAgreement(IReadOnlyList<BiasComponent> components, double biasScore)
     {
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        const double eps = 1e-6;
+        if (Math.Abs(biasScore) < eps)
+            return 0;
+
+        int sign = Math.Sign(biasScore);
+        int considered = 0;
+        int agree = 0;
+        foreach (BiasComponent c in components)
+        {
+            if (Math.Abs(c.Normalized) < eps)
+                continue;
+            considered++;
+            if (Math.Sign(c.Normalized) == sign)
+                agree++;
+        }
+
+        return considered > 0 ? (double)agree / considered : 0;
+    }
+
+    /// <summary>
+    /// Главная сделка сессии (раздел B спека): детерминированная матрица режим×смещение.
+    /// +гамма → фейд края к магниту; −гамма → пробой в сторону смещения; иначе/слабый или
+    /// противоречивый сигнал / спот у gamma-flip → ВНЕ РЫНКА. Вход/цель/стоп — из тех же
+    /// уровней и σ-диапазона, что и карта; цель и стоп всегда по разные стороны от входа.
+    /// </summary>
+    private PrimaryTrade BuildPrimaryTrade(
+        SessionRecommendation rec, double spot,
+        OptionData? callWall, OptionData? putWall,
+        double primaryMagnet, double? gammaFlip, int conviction, bool gammaModelsDisagree)
+    {
+        double b = rec.BiasScore;
+        double sigma = rec.Range.DailySigma1;
+        double safeSigma = sigma > 0 && double.IsFinite(sigma) ? sigma : spot * 0.01;
+        double upper1 = rec.Range.Upper1, lower1 = rec.Range.Lower1;
+        double upper2 = rec.Range.Upper2, lower2 = rec.Range.Lower2;
+        double callWallPrice = callWall?.Strike ?? upper1;
+        double putWallPrice = putWall?.Strike ?? lower1;
+
+        var trade = new PrimaryTrade
+        {
+            Conviction = conviction,
+            ConvictionLabel = ConvictionLabel(conviction),
+            Drivers = TopDrivers(rec.BiasComponents, 2)
+        };
+
+        // --- Условия ВНЕ РЫНКА (сигнал недостоверен/не сформирован) ---
+        bool nearFlip = gammaFlip is { } gf && double.IsFinite(gf)
+                        && Math.Abs(spot - gf) < FlipProximitySigma * safeSigma;
+        string? standReason =
+            gammaModelsDisagree ? "модели гаммы расходятся по знаку у спота" :
+            rec.Regime == VolatilityRegime.Neutral ? $"Net GEX у спота ≈0 ({FmtUsd(rec.NetGexAtSpot)}/1%) — чёткого режима нет" :
+            nearFlip ? $"спот вплотную к gamma-flip {Fmt(gammaFlip!.Value)} — режим неустойчив" :
+            Math.Abs(b) < StandAsideBiasMin ? "сигналы гасят друг друга — нет смещения" :
+            conviction < ConvictionMin ? "конвикция ниже порога" : null;
+
+        if (standReason is not null)
+        {
+            trade.Action = TradeAction.StandAside;
+            trade.Side = TradeSide.None;
+            trade.Headline = "ВНЕ РЫНКА";
+            trade.Reason = standReason;
+            trade.Setup = $"Сетап появится при выходе за {Fmt(lower1)} / {Fmt(upper1)} или росте |смещения| ≥ {StandAsideBiasMin:0.00}.";
+            trade.Invalidation = "—";
+            return trade;
+        }
+
+        double stopBuffer = Math.Max(safeSigma, spot * 0.0025);
+        double entryHalf = EntryZoneSigma * safeSigma;
+
+        if (rec.Regime == VolatilityRegime.PositiveGamma)
+        {
+            // ФЕЙД: торгуем к магниту. Магнит выше спота → Long от поддержки; ниже → Short от сопротивления.
+            bool longSide = primaryMagnet >= spot;
+            trade.Action = TradeAction.FadeRange;
+            trade.Side = longSide ? TradeSide.Long : TradeSide.Short;
+            trade.Target = primaryMagnet;
+
+            if (longSide)
+            {
+                double entry = NearestInDirection([putWallPrice, lower1], spot, -1, lower1);
+                trade.EntryLow = entry - entryHalf;
+                trade.EntryHigh = entry + entryHalf;
+                trade.Stop = entry - stopBuffer;
+                trade.Headline = $"ФЕЙД — Long от поддержки {Fmt(entry)} к магниту {Fmt(primaryMagnet)}";
+                trade.Invalidation = $"закрытие ниже {Fmt(trade.Stop.Value)} → коридор сломан, фейд отменяется";
+            }
+            else
+            {
+                double entry = NearestInDirection([callWallPrice, upper1], spot, +1, upper1);
+                trade.EntryLow = entry - entryHalf;
+                trade.EntryHigh = entry + entryHalf;
+                trade.Stop = entry + stopBuffer;
+                trade.Headline = $"ФЕЙД — Short от сопротивления {Fmt(entry)} к магниту {Fmt(primaryMagnet)}";
+                trade.Invalidation = $"закрытие выше {Fmt(trade.Stop.Value)} → коридор сломан, фейд отменяется";
+            }
+
+            trade.Reason = $"положительная гамма (Net GEX {FmtUsd(rec.NetGexAtSpot)}/1%) — дилеры гасят волатильность, цену тянет к магниту {Fmt(primaryMagnet)}.";
+            trade.PlanB = gammaFlip is { } f1
+                ? $"Если закрытие за gamma-flip {Fmt(f1)} — режим ломается, переход к пробою."
+                : "Если коридор пробит с закреплением — переход к пробою.";
+        }
+        else
+        {
+            // ПРОБОЙ: вход по пробою в сторону смещения.
+            bool longSide = b >= 0;
+            trade.Action = TradeAction.Breakout;
+            trade.Side = longSide ? TradeSide.Long : TradeSide.Short;
+
+            double[] upLevels = [upper1, callWallPrice, upper2];
+            double[] downLevels = [lower1, putWallPrice, lower2];
+
+            if (longSide)
+            {
+                double trigger = NearestInDirection(upLevels, spot, +1, upper1);
+                trade.EntryLow = trigger;
+                trade.EntryHigh = trigger + 0.1 * safeSigma;
+                List<double> tgts = DirectionalTargets([callWallPrice, upper2], trigger, +1, spot, safeSigma);
+                trade.Target = tgts.Count > 0 ? tgts[0] : trigger + Math.Max(safeSigma, spot * 0.005);
+                trade.Stop = trigger - stopBuffer;
+                trade.Headline = $"ПРОБОЙ — Long выше {Fmt(trigger)}";
+                trade.Invalidation = $"возврат ниже {Fmt(trigger)} — ложный пробой";
+            }
+            else
+            {
+                double trigger = NearestInDirection(downLevels, spot, -1, lower1);
+                trade.EntryLow = trigger - 0.1 * safeSigma;
+                trade.EntryHigh = trigger;
+                List<double> tgts = DirectionalTargets([putWallPrice, lower2], trigger, -1, spot, safeSigma);
+                trade.Target = tgts.Count > 0 ? tgts[0] : trigger - Math.Max(safeSigma, spot * 0.005);
+                trade.Stop = trigger + stopBuffer;
+                trade.Headline = $"ПРОБОЙ — Short ниже {Fmt(trigger)}";
+                trade.Invalidation = $"возврат выше {Fmt(trigger)} — ложный пробой";
+            }
+
+            trade.Reason = $"отрицательная гамма (Net GEX {FmtUsd(rec.NetGexAtSpot)}/1%) — дилеры усиливают движения, склонность к пробою в сторону {BiasText(rec.Bias)}.";
+            trade.PlanB = "Если пробой ложный (возврат за триггер) — фейд обратно в коридор.";
+        }
+
+        trade.RiskReward = ComputeRiskReward(trade);
+        return trade;
+    }
+
+    /// <summary>Ярлык конвикции: ≥60 Высокая, 35..59 Средняя, иначе Низкая.</summary>
+    private static string ConvictionLabel(int conviction)
+        => conviction >= 60 ? "Высокая" : conviction >= 35 ? "Средняя" : "Низкая";
+
+    /// <summary>Топ-N драйверов по модулю вклада в bias (короткой строкой).</summary>
+    private static List<string> TopDrivers(IReadOnlyList<BiasComponent> components, int n)
+        => components
+            .Where(c => Math.Abs(c.Contribution) > 1e-6)
+            .OrderByDescending(c => Math.Abs(c.Contribution))
+            .Take(n)
+            .Select(c => $"{c.Name}: {(c.Normalized >= 0 ? "вверх" : "вниз")} (вклад {c.Contribution:+0.00;-0.00})")
+            .ToList();
+
+    /// <summary>R:R = |цель−середина входа| / |середина входа−стоп|; null при неполных данных.</summary>
+    private static double? ComputeRiskReward(PrimaryTrade t)
+    {
+        if (t.EntryLow is not { } lo || t.EntryHigh is not { } hi
+            || t.Target is not { } tgt || t.Stop is not { } stop)
+            return null;
+
+        double entry = (lo + hi) / 2;
+        double reward = Math.Abs(tgt - entry);
+        double risk = Math.Abs(entry - stop);
+        if (risk <= 0 || !double.IsFinite(reward) || !double.IsFinite(risk))
+            return null;
+
+        double rr = reward / risk;
+        return double.IsFinite(rr) ? Math.Round(rr, 2) : null;
+    }
+
+    /// <summary>
+    /// Доля года до следующего сброса 08:00 UTC от момента снимка <paramref name="asOf"/>
+    /// (не от UtcNow — чтобы σ-диапазон был согласован с DTE/гаммой того же снимка), минимум 1 час.
+    /// </summary>
+    private static double ComputeSessionYears(DateTimeOffset asOf)
+    {
+        DateTimeOffset now = asOf.ToUniversalTime();
         var todayReset = new DateTimeOffset(now.Year, now.Month, now.Day, SessionResetHourUtc, 0, 0, TimeSpan.Zero);
         DateTimeOffset nextReset = now < todayReset ? todayReset : todayReset.AddDays(1);
 
@@ -305,7 +515,7 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
     private List<PriceLevel> BuildLevels(
         SessionRecommendation rec, double spot,
         OptionData? callWall, OptionData? putWall,
-        double maxPain, double gravityNear, double? gammaFlip)
+        double maxPain, double centroidNear, double? gammaFlip)
     {
         var levels = new List<PriceLevel>();
 
@@ -333,7 +543,7 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
             Add(LevelKind.PutWall, $"PUT-стена {Fmt(putWall.Strike)}", putWall.Strike, "Поддержка", putWall.PutOi);
 
         Add(LevelKind.MaxPain, $"Max Pain {Fmt(maxPain)}", maxPain, "Магнит");
-        Add(LevelKind.GravityEquilibrium, $"Центр тяжести {Fmt(gravityNear)}", gravityNear, "Магнит");
+        Add(LevelKind.GravityEquilibrium, $"Центр тяжести {Fmt(centroidNear)}", centroidNear, "Магнит");
 
         if (gammaFlip is { } flip)
             Add(LevelKind.GammaFlip, $"Gamma-flip {Fmt(flip)}", flip, "Пивот");
@@ -385,38 +595,39 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
     private void ScoreDirection(
         SessionRecommendation rec, double spot, double dailySigma1,
         ExpirationAnalysis front, IReadOnlyList<ExpiryView> near,
-        double gravityNear, double? gammaFlip, double frontDte, bool gammaModelsDisagree)
+        double centroidNear, double? gammaFlip, double frontDte, bool gammaModelsDisagree)
     {
         var components = new List<BiasComponent>();
         double safeSigma = dailySigma1 > 0 && double.IsFinite(dailySigma1) ? dailySigma1 : spot * 0.01;
 
-        // --- pin (тяга к Max Pain фронта) ---
-        double pinRaw = front.MaxPain - spot;
-        double pin = SessionAnalysisMath.Clamp(pinRaw / safeSigma, -1, 1);
+        // --- Магнит (объединённая тяга к Max Pain фронта и OI-центроиду близких) ---
+        // pin и gravity сильно коррелированы (обе — проекции распределения OI по страйкам),
+        // поэтому сведены в ОДИН компонент, чтобы не удваивать вес центра OI. Нормировка —
+        // мягкое tanh по масштабу, соразмерному расстоянию до магнитов (а не по сессионному σ,
+        // которое почти всегда давало насыщение ±1). Пояснение печатает СЫРОЕ отношение.
         double pf = SessionAnalysisMath.Clamp(1 - frontDte / 7.0, 0.3, 1);
-        components.Add(new BiasComponent
-        {
-            Name = "Пиннинг (Max Pain)",
-            RawValue = pinRaw,
-            Normalized = pin,
-            Weight = WeightPinBase * pf,
-            Explanation = $"Max Pain фронта {Fmt(front.MaxPain)} {Direction(pinRaw)} спота {Fmt(spot)} " +
-                          $"на {Fmt(Math.Abs(pinRaw))} (≈{pin:+0.00;-0.00;0.00}σ); вес усилен близостью экспирации (DTE {frontDte:0.0})."
-        });
+        double magnetScale = Math.Max(front.ExpectedMove1Sigma, spot * MagnetScaleFloorPct);
+        if (!(magnetScale > 0)) magnetScale = safeSigma;
 
-        // --- gravity (тяга к центру тяжести близких) ---
-        // gravityNear вычислен один раз в Build и передан сюда — карта уровней, сценарии
-        // и этот компонент гарантированно ссылаются на одно значение.
-        double gravityRaw = gravityNear - spot;
-        double gravity = SessionAnalysisMath.Clamp(gravityRaw / safeSigma, -1, 1);
+        var pulls = new List<(string Label, double Price, double Raw, double Ratio)>();
+        if (front.MaxPain > 0)
+            pulls.Add(("Max Pain фронта", front.MaxPain, front.MaxPain - spot, (front.MaxPain - spot) / magnetScale));
+        if (centroidNear > 0)
+            pulls.Add(("центр тяжести близких", centroidNear, centroidNear - spot, (centroidNear - spot) / magnetScale));
+
+        double magnetRaw = pulls.Count > 0 ? pulls.Average(p => p.Raw) : 0;
+        double magnetNorm = pulls.Count > 0 ? Math.Tanh(pulls.Average(p => p.Ratio)) : 0;
         components.Add(new BiasComponent
         {
-            Name = "Центр тяжести",
-            RawValue = gravityRaw,
-            Normalized = gravity,
-            Weight = WeightGravity,
-            Explanation = $"центр тяжести близких {Fmt(gravityNear)} {Direction(gravityRaw)} спота " +
-                          $"на {Fmt(Math.Abs(gravityRaw))} (≈{gravity:+0.00;-0.00;0.00}σ)."
+            Name = "Магнит",
+            RawValue = magnetRaw,
+            Normalized = magnetNorm,
+            Weight = WeightMagnet * pf,
+            Explanation = pulls.Count > 0
+                ? string.Join("; ", pulls.Select(p =>
+                      $"{p.Label} {Fmt(p.Price)} {Direction(p.Raw)} спота на {Fmt(Math.Abs(p.Raw))} ({p.Ratio:+0.00;-0.00;0.00}·масштаб)")) +
+                  $"; масштаб {Fmt(magnetScale)}, вес ×близость (DTE {frontDte:0.0})."
+                : "магниты недоступны (нет OI)."
         });
 
         // --- dex (долларовая дельта-экспозиция) ---
@@ -516,7 +727,7 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
     private List<Scenario> BuildScenarios(
         SessionRecommendation rec, double spot,
         OptionData? callWall, OptionData? putWall,
-        double maxPain, double gravityNear, double? gammaFlip)
+        double maxPain, double centroidNear, double? gammaFlip)
     {
         bool positiveGamma = rec.Regime == VolatilityRegime.PositiveGamma;
         double lower1 = rec.Range.Lower1;
@@ -525,7 +736,7 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
         double upper2 = rec.Range.Upper2;
         double callWallPrice = callWall?.Strike ?? upper1;
         double putWallPrice = putWall?.Strike ?? lower1;
-        double magnet = maxPain > 0 ? maxPain : gravityNear;
+        double magnet = maxPain > 0 ? maxPain : centroidNear;
 
         var scenarios = new List<Scenario>();
 

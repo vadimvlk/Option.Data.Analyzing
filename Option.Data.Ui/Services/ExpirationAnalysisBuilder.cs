@@ -51,6 +51,15 @@ public class ExpirationAnalysisBuilder : IExpirationAnalysisBuilder
 
             double gravityEquilibrium = (callCog + putCog) / 2;
 
+            // OI-взвешенный центр тяжести всей цепочки (call+put вместе) — корректный «магнит»
+            // с учётом дисбаланса OI. При нулевом суммарном OI → 0 (sentinel «недоступно»),
+            // downstream (SessionRecommendationBuilder) такие значения пропускает.
+            double totalOi = optionData.Sum(o => o.CallOi + o.PutOi);
+            double oiCentroid = totalOi > 0
+                ? optionData.Sum(o => o.Strike * (o.CallOi + o.PutOi)) / totalOi
+                : 0;
+            if (!double.IsFinite(oiCentroid)) oiCentroid = 0;
+
             // Calculate break-even points (upper and lower boundaries)
             var boundaries = CalculateBreakEvenPoints(optionData, underlyingPrice);
 
@@ -68,6 +77,7 @@ public class ExpirationAnalysisBuilder : IExpirationAnalysisBuilder
                 CallCenterOfGravity = callCog,
                 PutCenterOfGravity = putCog,
                 GravityEquilibrium = gravityEquilibrium,
+                OiCentroid = oiCentroid,
                 UpperBoundary = boundaries.upperBoundary,
                 LowerBoundary = boundaries.lowerBoundary,
                 DollarDeltaExposure = OptionExposureMath.DollarDeltaExposure(optionData, underlyingPrice),
@@ -104,6 +114,7 @@ public class ExpirationAnalysisBuilder : IExpirationAnalysisBuilder
                     CallDelta = callData?.Delta ?? 0,
                     CallGamma = callData?.Gamma ?? 0,
                     Iv = callData?.Iv ?? (putData?.Iv ?? 0),
+                    PutIv = putData?.Iv ?? 0,
                     PutOi = putData?.OpenInterest ?? 0,
                     PutPrice = putData?.MarkPrice * putData?.UnderlyingPrice ?? 0,
                     PutDelta = putData?.Delta ?? 0,
@@ -124,6 +135,11 @@ public class ExpirationAnalysisBuilder : IExpirationAnalysisBuilder
         double minPrice = minStrike * (1 - rangeExtensionPercent);
         double maxPrice = maxStrike * (1 + rangeExtensionPercent);
         double step = currentPrice * 0.001;
+
+        // Защита от зависания: при битом снимке (UnderlyingPrice==0 ⇒ step==0) цикл ниже
+        // не продвигался бы бесконечно. Деградируем к «границы недоступны».
+        if (currentPrice <= 0 || step <= 0)
+            return (null, null);
 
         // Calculate PnL at different price points
         List<(double Price, double TotalPnL)> pnlData = new();

@@ -21,11 +21,13 @@ public static class OptionExposureMath
     private const int DeribitExpiryHourUtc = 8;
 
     /// <summary>
-    /// DEX — долларовая дельта-экспозиция «глобального продавца», USD на $1 движения спота.
+    /// DEX — долларовый дельта-нотионал «глобального продавца» (delta-adjusted notional, USD);
+    /// численно ≈ изменение стоимости позиции при движении спота на 100%.
     /// DEX = -Σ(δ_call·OI_call + δ_put·OI_put)·S.
     /// Продавец считается шортом всего открытого интереса: δ_put&lt;0 даёт + (продавец путов
-    /// выигрывает от роста), δ_call&gt;0 даёт −. Умножение на S переводит «монето-дельту»
-    /// (как в прежней реализации) в долларовую направленную экспозицию.
+    /// выигрывает от роста), δ_call&gt;0 даёт −. Множитель S переводит «монето-дельту» (δ·OI,
+    /// чувствительность на $1 движения) в долларовый нотионал. NB: это НЕ «USD на $1 движения»
+    /// (та величина — без S); в скоринге направления нормируется обратно на спот·OI.
     /// </summary>
     public static double DollarDeltaExposure(IReadOnlyList<OptionData> chain, double underlyingPrice)
         => -chain.Sum(o => o.CallDelta * o.CallOi + o.PutDelta * o.PutOi) * underlyingPrice;
@@ -119,9 +121,13 @@ public static class OptionExposureMath
                  .Select(o => (AbsDelta: o.CallDelta, o.Iv)),
             0.25);
 
+        // Put-нога скоса считается по СОБСТВЕННОЙ put-IV (o.PutIv), а не по объединённой
+        // Iv (которая на страйке с коллом равна call-IV) — иначе путовая дельта пэйрится
+        // с call-волатильностью. Фолбэк на o.Iv, если put-IV отсутствует (PutIv==0).
         double? putIv = InterpolateIvAtAbsDelta(
-            chain.Where(o => o.PutOi > 0 && o.PutDelta < 0 && o.Iv > 0)
-                 .Select(o => (AbsDelta: Math.Abs(o.PutDelta), o.Iv)),
+            chain.Where(o => o.PutOi > 0 && o.PutDelta < 0)
+                 .Select(o => (AbsDelta: Math.Abs(o.PutDelta), Iv: o.PutIv > 0 ? o.PutIv : o.Iv))
+                 .Where(x => x.Iv > 0),
             0.25);
 
         if (callIv is null || putIv is null)
@@ -131,9 +137,13 @@ public static class OptionExposureMath
     }
 
     /// <summary>
-    /// Линейная интерполяция IV по модулю дельты к целевому |δ| без экстраполяции
-    /// (за пределами диапазона берётся ближайший край).
+    /// Линейная интерполяция IV по модулю дельты к целевому |δ| без экстраполяции.
+    /// Если целевая |δ| вне наблюдаемого диапазона — край принимается только при близости
+    /// (допуск <see cref="DeltaEdgeTolerance"/>), иначе возвращается null (RR недоступен),
+    /// чтобы не выдавать IV узла с произвольной дельтой за «25-дельта».
     /// </summary>
+    private const double DeltaEdgeTolerance = 0.10;
+
     private static double? InterpolateIvAtAbsDelta(IEnumerable<(double AbsDelta, double Iv)> points, double targetAbsDelta)
     {
         List<(double AbsDelta, double Iv)> p = points.OrderBy(x => x.AbsDelta).ToList();
@@ -156,6 +166,9 @@ public static class OptionExposureMath
             }
         }
 
-        return targetAbsDelta < p[0].AbsDelta ? p[0].Iv : p[^1].Iv;
+        bool belowRange = targetAbsDelta < p[0].AbsDelta;
+        double edgeDelta = belowRange ? p[0].AbsDelta : p[^1].AbsDelta;
+        double edgeIv = belowRange ? p[0].Iv : p[^1].Iv;
+        return Math.Abs(edgeDelta - targetAbsDelta) <= DeltaEdgeTolerance ? edgeIv : null;
     }
 }

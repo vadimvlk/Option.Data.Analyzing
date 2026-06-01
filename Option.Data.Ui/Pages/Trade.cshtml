@@ -47,8 +47,8 @@
         LevelKind.Spot => "Спот",
         LevelKind.CallWall => "CALL-стена",
         LevelKind.PutWall => "PUT-стена",
-        LevelKind.MaxPain => "Max Pain",
-        LevelKind.GravityEquilibrium => "Центр тяжести",
+        LevelKind.MaxPain => "Max Pain (фронт)",
+        LevelKind.GravityEquilibrium => "Центр тяжести (близкие)",
         LevelKind.GammaFlip => "Gamma Flip",
         LevelKind.GammaPeak => "Пик гаммы",
         LevelKind.Sigma1Up => "+1σ",
@@ -57,6 +57,22 @@
         LevelKind.Sigma2Down => "−2σ",
         _ => kind.ToString()
     };
+
+    // ---- Главная сделка сессии ----
+    static string SideText(TradeSide s) => s switch
+    {
+        TradeSide.Long => "Long",
+        TradeSide.Short => "Short",
+        _ => "—"
+    };
+
+    // Цвет рамки/бейджа сделки: Long — зелёный, Short — красный, Вне рынка — серый.
+    static string TradeAccent(PrimaryTrade t) => t.Action == TradeAction.StandAside
+        ? "secondary"
+        : t.Side == TradeSide.Long ? "success" : t.Side == TradeSide.Short ? "danger" : "secondary";
+
+    // Цвет бейджа конвикции: Высокая — зелёный, Средняя — жёлтый, Низкая — серый.
+    static string ConvBadgeClass(int c) => c >= 60 ? "bg-success" : c >= 35 ? "bg-warning text-dark" : "bg-secondary";
 
     // ---- Server-render SVG карты уровней (строится строкой, чтобы избежать
     //      коллизии SVG <text> с управляющим тегом Razor) ----
@@ -102,7 +118,12 @@
             sb.Append($"<text x=\"{F(axisX)}\" y=\"{F(ty + 4)}\" text-anchor=\"end\" font-size=\"11\" fill=\"#6b7280\">{Esc(tick.ToString("N0", CultureInfo.CurrentCulture))}</text>");
         }
 
-        // уровни
+        // Линии/полосы рисуем на истинной Y; подписи СОБИРАЕМ и затем разносим по вертикали,
+        // чтобы близкие по цене уровни не накладывались текстами друг на друга.
+        // Левая колонка: стены + σ-границы; правая: магниты, gamma-flip, спот.
+        var lefts = new List<(double TrueY, double LabelY, string Text, string Color, bool Bold, int Font)>();
+        var rights = new List<(double TrueY, double LabelY, string Text, string Color, bool Bold, bool SpotBox)>();
+
         foreach (PriceLevel lvl in r.Levels)
         {
             if (lvl.Kind == LevelKind.Spot) continue;
@@ -117,36 +138,94 @@
                 case LevelKind.CallWall:
                     sb.Append($"<rect x=\"{F(plotLeft)}\" y=\"{F(y - 7)}\" width=\"{F(plotRight - plotLeft)}\" height=\"14\" fill=\"rgba(220,53,69,0.18)\"/>");
                     sb.Append($"<line x1=\"{F(plotLeft)}\" y1=\"{F(y)}\" x2=\"{F(plotRight)}\" y2=\"{F(y)}\" stroke=\"#dc3545\" stroke-width=\"2\"/>");
-                    sb.Append($"<text x=\"{F(plotLeft + 6)}\" y=\"{F(y - 9)}\" font-size=\"11\" fill=\"#dc3545\" font-weight=\"600\">{Esc($"{kindLabel} · {N2(lvl.Price)} · {lvl.Role}{oi}")}</text>");
+                    lefts.Add((y, y, $"{kindLabel} · {N2(lvl.Price)} · {lvl.Role}{oi}", "#dc3545", true, 11));
                     break;
                 case LevelKind.PutWall:
                     sb.Append($"<rect x=\"{F(plotLeft)}\" y=\"{F(y - 7)}\" width=\"{F(plotRight - plotLeft)}\" height=\"14\" fill=\"rgba(25,135,84,0.18)\"/>");
                     sb.Append($"<line x1=\"{F(plotLeft)}\" y1=\"{F(y)}\" x2=\"{F(plotRight)}\" y2=\"{F(y)}\" stroke=\"#198754\" stroke-width=\"2\"/>");
-                    sb.Append($"<text x=\"{F(plotLeft + 6)}\" y=\"{F(y + 16)}\" font-size=\"11\" fill=\"#198754\" font-weight=\"600\">{Esc($"{kindLabel} · {N2(lvl.Price)} · {lvl.Role}{oi}")}</text>");
+                    lefts.Add((y, y, $"{kindLabel} · {N2(lvl.Price)} · {lvl.Role}{oi}", "#198754", true, 11));
                     break;
                 case LevelKind.MaxPain:
                 case LevelKind.GravityEquilibrium:
                     sb.Append($"<line x1=\"{F(plotLeft)}\" y1=\"{F(y)}\" x2=\"{F(plotRight)}\" y2=\"{F(y)}\" stroke=\"#a855f7\" stroke-width=\"1.5\" stroke-dasharray=\"6 4\"/>");
-                    sb.Append($"<text x=\"{F(plotRight - 6)}\" y=\"{F(y - 4)}\" text-anchor=\"end\" font-size=\"11\" fill=\"#7e22ce\">{Esc($"{kindLabel} · {N2(lvl.Price)} · магнит ({Pct(lvl.DistancePercent)}%)")}</text>");
+                    rights.Add((y, y, $"{kindLabel} · {N2(lvl.Price)} · магнит ({Pct(lvl.DistancePercent)}%)", "#7e22ce", false, false));
                     break;
                 case LevelKind.GammaFlip:
                     sb.Append($"<line x1=\"{F(plotLeft)}\" y1=\"{F(y)}\" x2=\"{F(plotRight)}\" y2=\"{F(y)}\" stroke=\"#0d6efd\" stroke-width=\"1.5\" stroke-dasharray=\"4 4\"/>");
-                    sb.Append($"<text x=\"{F(plotRight - 6)}\" y=\"{F(y + 14)}\" text-anchor=\"end\" font-size=\"11\" fill=\"#0d6efd\">{Esc($"{kindLabel} · {N2(lvl.Price)} · пивот ({Pct(lvl.DistancePercent)}%)")}</text>");
+                    rights.Add((y, y, $"{kindLabel} · {N2(lvl.Price)} · пивот ({Pct(lvl.DistancePercent)}%)", "#0d6efd", false, false));
                     break;
                 default:
                     // σ-границы и прочие тонкие линии
                     sb.Append($"<line x1=\"{F(plotLeft)}\" y1=\"{F(y)}\" x2=\"{F(plotRight)}\" y2=\"{F(y)}\" stroke=\"#9ca3af\" stroke-width=\"0.75\" stroke-dasharray=\"2 3\"/>");
-                    sb.Append($"<text x=\"{F(plotLeft + 6)}\" y=\"{F(y - 3)}\" font-size=\"10\" fill=\"#6b7280\">{Esc($"{kindLabel} · {N2(lvl.Price)}")}</text>");
+                    lefts.Add((y, y, $"{kindLabel} · {N2(lvl.Price)}", "#6b7280", false, 10));
                     break;
             }
         }
 
-        // спот: заметный маркер
+        // спот: линия + маркер на истинной Y; подпись-плашка участвует в разносе справа
         double spotY = Y(r.Spot);
         sb.Append($"<line x1=\"{F(plotLeft)}\" y1=\"{F(spotY)}\" x2=\"{F(plotRight)}\" y2=\"{F(spotY)}\" stroke=\"#111827\" stroke-width=\"2.5\"/>");
         sb.Append($"<circle cx=\"{F(plotLeft)}\" cy=\"{F(spotY)}\" r=\"5\" fill=\"#111827\"/>");
-        sb.Append($"<rect x=\"{F(plotRight - 150)}\" y=\"{F(spotY - 22)}\" width=\"146\" height=\"18\" rx=\"3\" fill=\"#111827\"/>");
-        sb.Append($"<text x=\"{F(plotRight - 77)}\" y=\"{F(spotY - 9)}\" text-anchor=\"middle\" font-size=\"11\" fill=\"#ffffff\" font-weight=\"700\">{Esc($"СПОТ {N2(r.Spot)}")}</text>");
+        rights.Add((spotY, spotY, $"СПОТ {N2(r.Spot)}", "#111827", true, true));
+
+        // --- Разнос подписей по вертикали: сортировка по истинной Y, минимальный зазор ---
+        const double gap = 15d, topLimit = 12d;
+        double bottomLimit = height - 6d;
+
+        rights.Sort((a, b) => a.TrueY.CompareTo(b.TrueY));
+        for (int i = 0; i < rights.Count; i++)
+        {
+            double minY = i == 0 ? topLimit : rights[i - 1].LabelY + gap;
+            if (rights[i].LabelY < minY)
+                rights[i] = (rights[i].TrueY, minY, rights[i].Text, rights[i].Color, rights[i].Bold, rights[i].SpotBox);
+        }
+        for (int i = rights.Count - 1; i >= 0; i--)
+        {
+            double maxY = i == rights.Count - 1 ? bottomLimit : rights[i + 1].LabelY - gap;
+            if (rights[i].LabelY > maxY)
+                rights[i] = (rights[i].TrueY, maxY, rights[i].Text, rights[i].Color, rights[i].Bold, rights[i].SpotBox);
+        }
+
+        lefts.Sort((a, b) => a.TrueY.CompareTo(b.TrueY));
+        for (int i = 0; i < lefts.Count; i++)
+        {
+            double minY = i == 0 ? topLimit : lefts[i - 1].LabelY + gap;
+            if (lefts[i].LabelY < minY)
+                lefts[i] = (lefts[i].TrueY, minY, lefts[i].Text, lefts[i].Color, lefts[i].Bold, lefts[i].Font);
+        }
+        for (int i = lefts.Count - 1; i >= 0; i--)
+        {
+            double maxY = i == lefts.Count - 1 ? bottomLimit : lefts[i + 1].LabelY - gap;
+            if (lefts[i].LabelY > maxY)
+                lefts[i] = (lefts[i].TrueY, maxY, lefts[i].Text, lefts[i].Color, lefts[i].Bold, lefts[i].Font);
+        }
+
+        // --- Отрисовка подписей (поверх линий), с тонким коннектором при смещении ---
+        foreach (var lab in rights)
+        {
+            if (Math.Abs(lab.LabelY - lab.TrueY) > 6)
+                sb.Append($"<line x1=\"{F(plotRight - 4)}\" y1=\"{F(lab.TrueY)}\" x2=\"{F(plotRight - 4)}\" y2=\"{F(lab.LabelY - 4)}\" stroke=\"{lab.Color}\" stroke-width=\"0.5\" stroke-dasharray=\"1 2\"/>");
+
+            if (lab.SpotBox)
+            {
+                const double boxW = 146d;
+                sb.Append($"<rect x=\"{F(plotRight - boxW - 4)}\" y=\"{F(lab.LabelY - 13)}\" width=\"{F(boxW)}\" height=\"18\" rx=\"3\" fill=\"#111827\"/>");
+                sb.Append($"<text x=\"{F(plotRight - 4 - boxW / 2)}\" y=\"{F(lab.LabelY)}\" text-anchor=\"middle\" font-size=\"11\" fill=\"#ffffff\" font-weight=\"700\">{Esc(lab.Text)}</text>");
+            }
+            else
+            {
+                string fw = lab.Bold ? " font-weight=\"600\"" : "";
+                sb.Append($"<text x=\"{F(plotRight - 6)}\" y=\"{F(lab.LabelY)}\" text-anchor=\"end\" font-size=\"11\" fill=\"{lab.Color}\"{fw}>{Esc(lab.Text)}</text>");
+            }
+        }
+        foreach (var lab in lefts)
+        {
+            if (Math.Abs(lab.LabelY - lab.TrueY) > 6)
+                sb.Append($"<line x1=\"{F(plotLeft + 2)}\" y1=\"{F(lab.TrueY)}\" x2=\"{F(plotLeft + 2)}\" y2=\"{F(lab.LabelY - 3)}\" stroke=\"{lab.Color}\" stroke-width=\"0.5\" stroke-dasharray=\"1 2\"/>");
+
+            string fw = lab.Bold ? " font-weight=\"600\"" : "";
+            sb.Append($"<text x=\"{F(plotLeft + 6)}\" y=\"{F(lab.LabelY)}\" font-size=\"{lab.Font}\" fill=\"{lab.Color}\"{fw}>{Esc(lab.Text)}</text>");
+        }
 
         sb.Append("</svg>");
         return sb.ToString();
@@ -162,8 +241,73 @@
     {
         SessionRecommendation rec = Model.Recommendation;
         SessionRange range = rec.Range;
+        PrimaryTrade pt = rec.Primary;
 
-        <!-- ================= 1. ВЕРДИКТ ================= -->
+        <!-- ================= 0. ГЛАВНАЯ СДЕЛКА СЕССИИ ================= -->
+        <article class="mb-4 border border-@TradeAccent(pt)" style="border-width:2px !important;">
+            <header class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                <strong class="fs-5">СДЕЛКА СЕССИИ — @rec.Currency, спот @rec.Spot.ToString("N2")</strong>
+                <span class="d-flex flex-wrap gap-2">
+                    <span class="badge bg-@TradeAccent(pt) fs-6">@pt.Headline</span>
+                    <span class="badge @ConvBadgeClass(pt.Conviction)">конвикция @pt.Conviction/100 · @pt.ConvictionLabel</span>
+                </span>
+            </header>
+
+            @if (pt.Action == TradeAction.StandAside)
+            {
+                <p class="mb-1"><strong>Причина:</strong> @pt.Reason</p>
+                <p class="mb-0 text-muted">@pt.Setup</p>
+            }
+            else
+            {
+                <div class="grid">
+                    <div>
+                        <p class="mb-1">
+                            <strong>Сторона:</strong> @SideText(pt.Side) ·
+                            до сброса 08:00 UTC через @rec.HoursToFrontExpiry.ToString("N1") ч
+                        </p>
+                        <p class="mb-1"><strong>Зона входа:</strong>
+                            <span class="text-primary">@(pt.EntryLow?.ToString("N2") ?? "—") … @(pt.EntryHigh?.ToString("N2") ?? "—")</span>
+                        </p>
+                        <p class="mb-1"><strong>Цель:</strong>
+                            <span class="text-success">@(pt.Target?.ToString("N2") ?? "—")</span>
+                        </p>
+                        <p class="mb-1"><strong>Стоп:</strong>
+                            <span class="text-danger">@(pt.Stop?.ToString("N2") ?? "—")</span>
+                        </p>
+                    </div>
+                    <div>
+                        <p class="mb-1">
+                            <strong>R:R:</strong>
+                            @if (pt.RiskReward.HasValue)
+                            {
+                                <span class="@(pt.RiskReward.Value >= 1 ? "text-success" : "text-danger")">@pt.RiskReward.Value.ToString("0.0")</span>
+                                @if (pt.RiskReward.Value < 1)
+                                {
+                                    <small class="text-danger">(невыгодный риск — можно пропустить)</small>
+                                }
+                            }
+                            else
+                            {
+                                <span class="text-muted">—</span>
+                            }
+                        </p>
+                        <p class="mb-1"><strong>Инвалидация:</strong> @pt.Invalidation</p>
+                        @if (pt.Drivers.Any())
+                        {
+                            <p class="mb-1"><strong>Драйверы:</strong> @string.Join("; ", pt.Drivers)</p>
+                        }
+                    </div>
+                </div>
+                <p class="mb-1"><small class="text-muted">@pt.Reason</small></p>
+                @if (!string.IsNullOrEmpty(pt.PlanB))
+                {
+                    <p class="mb-0"><small class="text-muted"><strong>План-Б:</strong> @pt.PlanB</small></p>
+                }
+            }
+        </article>
+
+        <!-- ================= 1. ВЕРДИКТ (контекст) ================= -->
         <article class="mb-4">
             <header>
                 <div class="d-flex flex-wrap justify-content-between align-items-baseline">
@@ -281,10 +425,11 @@
                     }
                 </article>
 
-                <!-- 6. ПОЧЕМУ -->
+                <!-- 6. ПОЧЕМУ (вторично, свёрнуто) -->
                 <article>
-                    <header><strong>Почему</strong></header>
-                    <div class="overflow-auto">
+                    <details>
+                    <summary><strong>Почему — разбор сигнала</strong></summary>
+                    <div class="overflow-auto mt-2">
                         <table class="table table-sm table-bordered table-hover mb-0">
                             <thead>
                             <tr>
@@ -326,13 +471,15 @@
                             </tfoot>
                         </table>
                     </div>
+                    </details>
                 </article>
             </div>
         </div>
 
-        <!-- ================= 5. ПЛАН (сценарии) ================= -->
-        <h4 class="mt-4">План</h4>
-        <div class="grid">
+        <!-- ================= 5. СЦЕНАРИИ (вторично, свёрнуто) ================= -->
+        <details class="mt-4">
+            <summary><strong>Сценарии (База / Бык / Медведь) — подробно</strong></summary>
+            <div class="grid mt-2">
             @foreach (Scenario sc in rec.Scenarios.OrderBy(s => s.Kind switch
                      {
                          ScenarioKind.Base => 0,
@@ -372,7 +519,8 @@
                     </article>
                 </div>
             }
-        </div>
+            </div>
+        </details>
 
         <!-- ================= 8. МАКРО-КОНТЕКСТ + NOTES ================= -->
         @if (rec.MacroContext.Any())

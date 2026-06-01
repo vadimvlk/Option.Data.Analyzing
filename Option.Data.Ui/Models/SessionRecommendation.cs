@@ -7,6 +7,12 @@ public enum VolatilityRegime { PositiveGamma, NegativeGamma, Neutral }
 public enum LevelKind { Spot, CallWall, PutWall, MaxPain, GravityEquilibrium, GammaFlip, GammaPeak, Sigma1Up, Sigma1Down, Sigma2Up, Sigma2Down }
 public enum ScenarioKind { Base, Bullish, Bearish }
 
+/// <summary>Тип действия главной сделки сессии.</summary>
+public enum TradeAction { FadeRange, Breakout, StandAside }
+
+/// <summary>Сторона главной сделки.</summary>
+public enum TradeSide { Long, Short, None }
+
 public class SessionRecommendation
 {
     public string Currency { get; set; } = "";
@@ -23,6 +29,10 @@ public class SessionRecommendation
     public double? GammaFlip { get; set; }
 
     public SessionRange Range { get; set; } = new();
+
+    /// <summary>Главная сделка сессии — единственная конкретная рекомендация (раздел B спека).</summary>
+    public PrimaryTrade Primary { get; set; } = new();
+
     public List<PriceLevel> Levels { get; set; } = new();      // отсортированы по Price (убыв.)
     public List<Scenario> Scenarios { get; set; } = new();     // Base, Bullish, Bearish
     public List<BiasComponent> BiasComponents { get; set; } = new();
@@ -64,6 +74,29 @@ public class Scenario
     public string Action { get; set; } = "";           // "Покупать у …"/"Продавать у …"/"Вне рынка"
     public string Reason { get; set; } = "";           // "потому что …"
     public double Probability { get; set; }            // 0..1, качественный вес
+}
+
+/// <summary>
+/// Главная сделка сессии: одна конкретная рекомендация вместо трёх параллельных сценариев.
+/// При <see cref="Action"/> = StandAside поля входа/цели/стопа пусты, заполнено <see cref="Setup"/>.
+/// </summary>
+public class PrimaryTrade
+{
+    public TradeAction Action { get; set; }
+    public TradeSide Side { get; set; }
+    public string Headline { get; set; } = "";        // "ФЕЙД ДИАПАЗОНА — Short от верхнего края к магниту"
+    public double? EntryLow { get; set; }
+    public double? EntryHigh { get; set; }
+    public double? Target { get; set; }
+    public double? Stop { get; set; }
+    public string Invalidation { get; set; } = "";     // условие отмены идеи
+    public double? RiskReward { get; set; }
+    public int Conviction { get; set; }                // 0..100
+    public string ConvictionLabel { get; set; } = "";  // Высокая/Средняя/Низкая
+    public string Reason { get; set; } = "";           // одна строка «почему»
+    public List<string> Drivers { get; set; } = new(); // топ 1-2 драйвера
+    public string PlanB { get; set; } = "";            // одна строка плана-Б
+    public string Setup { get; set; } = "";            // для StandAside: условие появления сетапа
 }
 
 public class BiasComponent
