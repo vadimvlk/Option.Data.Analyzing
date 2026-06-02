@@ -5,7 +5,7 @@ namespace Option.Data.Ui.Services;
 public interface ISessionRecommendationBuilder
 {
     SessionRecommendation Build(
-        IReadOnlyList<ExpirationAnalysis> analyses,
+        ExpirationAnalysis selected,
         string currency,
         DateTimeOffset asOf);
 }

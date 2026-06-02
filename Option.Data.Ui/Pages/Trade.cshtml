@@ -4,6 +4,7 @@
 @using System.Globalization
 @using Option.Data.Ui.Models
 @using Option.Data.Ui.Services
+@using Option.Data.Shared.Poco
 @inject IOptionsAnalysisHtmlBuilder HtmlBuilder;
 @model TradeModel
 @{
@@ -47,8 +48,8 @@
         LevelKind.Spot => "Спот",
         LevelKind.CallWall => "CALL-стена",
         LevelKind.PutWall => "PUT-стена",
-        LevelKind.MaxPain => "Max Pain (фронт)",
-        LevelKind.GravityEquilibrium => "Центр тяжести (близкие)",
+        LevelKind.MaxPain => "Max Pain",
+        LevelKind.GravityEquilibrium => "Центр тяжести",
         LevelKind.GammaFlip => "Gamma Flip",
         LevelKind.GammaPeak => "Пик гаммы",
         LevelKind.Sigma1Up => "+1σ",
@@ -73,6 +74,12 @@
 
     // Цвет бейджа конвикции: Высокая — зелёный, Средняя — жёлтый, Низкая — серый.
     static string ConvBadgeClass(int c) => c >= 60 ? "bg-success" : c >= 35 ? "bg-warning text-dark" : "bg-secondary";
+
+    // Время до экспирации: часы при <48 ч, иначе дни.
+    static string TimeToExpiryText(double days, double hours) =>
+        hours < 48
+            ? $"{hours.ToString("N1", CultureInfo.CurrentCulture)} ч"
+            : $"{days.ToString("N1", CultureInfo.CurrentCulture)} дн";
 
     // ---- Server-render SVG карты уровней (строится строкой, чтобы избежать
     //      коллизии SVG <text> с управляющим тегом Razor) ----
@@ -235,7 +242,29 @@
 <div class="container">
     <h2>Trade Plan — план на сессию</h2>
 
-    <partial name="_BaseOptionForm" model="Model"/>
+    <form method="post" class="mb-3">
+        <div class="grid">
+            <div>
+                <label for="currency">Валюта</label>
+                <select id="currency" name="ViewModel.SelectedCurrencyId" required>
+                    @foreach (CurrencyType currency in Model.ViewModel.Currencies)
+                    {
+                        <option value="@currency.Id" selected="@(currency.Id == Model.ViewModel.SelectedCurrencyId)">@currency.Name</option>
+                    }
+                </select>
+            </div>
+            <div>
+                <label for="expiration">Экспирация</label>
+                <select id="expiration" name="ViewModel.SelectedExpiration" required>
+                    @foreach (string exp in Model.ViewModel.Expirations)
+                    {
+                        <option value="@exp" selected="@(exp == Model.ViewModel.SelectedExpiration)">@exp</option>
+                    }
+                </select>
+            </div>
+        </div>
+        <button type="submit" asp-page-handler="" class="contrast">Load Data</button>
+    </form>
 
     @if (Model.Recommendation != null)
     {
@@ -264,7 +293,7 @@
                     <div>
                         <p class="mb-1">
                             <strong>Сторона:</strong> @SideText(pt.Side) ·
-                            до сброса 08:00 UTC через @rec.HoursToFrontExpiry.ToString("N1") ч
+                            до экспирации @rec.FrontExpiration: @TimeToExpiryText(rec.FrontDaysToExpiry, rec.HoursToFrontExpiry)
                         </p>
                         <p class="mb-1"><strong>Зона входа:</strong>
                             <span class="text-primary">@(pt.EntryLow?.ToString("N2") ?? "—") … @(pt.EntryHigh?.ToString("N2") ?? "—")</span>
@@ -313,7 +342,7 @@
                 <div class="d-flex flex-wrap justify-content-between align-items-baseline">
                     <h3 class="mb-1">@rec.Currency — спот @rec.Spot.ToString("N2")</h3>
                     <span class="text-muted">
-                        до экспирации фронта @rec.HoursToFrontExpiry.ToString("N1") ч · @rec.FrontExpiration
+                        до экспирации @rec.FrontExpiration: @TimeToExpiryText(rec.FrontDaysToExpiry, rec.HoursToFrontExpiry)
                     </span>
                 </div>
             </header>
@@ -329,21 +358,21 @@
 
             <div class="grid">
                 <div>
-                    <strong>Диапазон 1σ (сессия):</strong>
+                    <strong>Диапазон 1σ (до экспирации):</strong>
                     <span class="text-danger">@range.Lower1.ToString("N2")</span>
                     …
                     <span class="text-success">@range.Upper1.ToString("N2")</span>
                 </div>
                 <div>
-                    <strong>Диапазон 2σ (сессия):</strong>
+                    <strong>Диапазон 2σ (до экспирации):</strong>
                     <span class="text-danger">@range.Lower2.ToString("N2")</span>
                     …
                     <span class="text-success">@range.Upper2.ToString("N2")</span>
                 </div>
             </div>
             <small class="text-muted d-block mt-1">
-                Диапазон рассчитан на текущую сессию (до ближайшего сброса 08:00 UTC), σ_ATM фронта
-                @range.AtmIvPercent.ToString("N1")% годовых. «До экспирации фронта» в шапке — отдельный, более длинный горизонт.
+                Диапазон рассчитан до выбранной экспирации @rec.FrontExpiration,
+                σ_ATM @range.AtmIvPercent.ToString("N1")% годовых.
             </small>
         </article>
 
@@ -424,134 +453,12 @@
                         <p class="text-muted">Недостаточно данных для построения профиля гаммы.</p>
                     }
                 </article>
-
-                <!-- 6. ПОЧЕМУ (вторично, свёрнуто) -->
-                <article>
-                    <details>
-                    <summary><strong>Почему — разбор сигнала</strong></summary>
-                    <div class="overflow-auto mt-2">
-                        <table class="table table-sm table-bordered table-hover mb-0">
-                            <thead>
-                            <tr>
-                                <th>Сигнал</th>
-                                <th class="text-end">Значение</th>
-                                <th class="text-end">Нормировка</th>
-                                <th class="text-end">Вес</th>
-                                <th class="text-end">Вклад</th>
-                                <th>Пояснение</th>
-                            </tr>
-                            </thead>
-                            <tbody>
-                            @foreach (BiasComponent comp in rec.BiasComponents)
-                            {
-                                string normClass = comp.Normalized > 0 ? "text-success"
-                                    : comp.Normalized < 0 ? "text-danger" : "text-muted";
-                                string contribClass = comp.Contribution > 0 ? "text-success"
-                                    : comp.Contribution < 0 ? "text-danger" : "text-muted";
-                                <tr>
-                                    <td>@comp.Name</td>
-                                    <td class="text-end">@comp.RawValue.ToString("N2")</td>
-                                    <td class="text-end @normClass">@comp.Normalized.ToString("N2")</td>
-                                    <td class="text-end">@(comp.Weight > 0 ? comp.Weight.ToString("N2") : "модиф.")</td>
-                                    <td class="text-end @contribClass">@comp.Contribution.ToString("N2")</td>
-                                    <td><small>@comp.Explanation</small></td>
-                                </tr>
-                            }
-                            </tbody>
-                            <tfoot>
-                            <tr>
-                                <th colspan="4" class="text-end">Итог (BiasScore):</th>
-                                <th class="text-end @(rec.BiasScore > 0 ? "text-success" : rec.BiasScore < 0 ? "text-danger" : "text-muted")">
-                                    @rec.BiasScore.ToString("N2")
-                                </th>
-                                <th>
-                                    <span class="badge @BiasBadgeClass(rec.Bias)">@BiasText(rec.Bias)</span>
-                                </th>
-                            </tr>
-                            </tfoot>
-                        </table>
-                    </div>
-                    </details>
-                </article>
             </div>
         </div>
 
-        <!-- ================= 5. СЦЕНАРИИ (вторично, свёрнуто) ================= -->
-        <details class="mt-4">
-            <summary><strong>Сценарии (База / Бык / Медведь) — подробно</strong></summary>
-            <div class="grid mt-2">
-            @foreach (Scenario sc in rec.Scenarios.OrderBy(s => s.Kind switch
-                     {
-                         ScenarioKind.Base => 0,
-                         ScenarioKind.Bullish => 1,
-                         _ => 2
-                     }))
-            {
-                string borderClass = sc.Kind switch
-                {
-                    ScenarioKind.Bullish => "border-success",
-                    ScenarioKind.Bearish => "border-danger",
-                    _ => "border-primary"
-                };
-                string headClass = sc.Kind switch
-                {
-                    ScenarioKind.Bullish => "text-success",
-                    ScenarioKind.Bearish => "text-danger",
-                    _ => "text-primary"
-                };
-                <div>
-                    <article class="border @borderClass" style="border-width:2px !important;">
-                        <header class="@headClass"><strong>@sc.Title</strong></header>
-                        <p class="mb-1"><strong>Триггер:</strong> @sc.Trigger</p>
-                        <p class="mb-1">
-                            <strong>Цели:</strong>
-                            @(sc.Targets.Any() ? string.Join(", ", sc.Targets.Select(t => t.ToString("N2"))) : "—")
-                        </p>
-                        <p class="mb-1">
-                            <strong>Стоп:</strong>
-                            @(sc.Stop.HasValue ? sc.Stop.Value.ToString("N2") : "—")
-                        </p>
-                        <p class="mb-1"><strong>Действие:</strong> @sc.Action</p>
-                        <p class="mb-1"><small class="text-muted">@sc.Reason</small></p>
-                        <p class="mb-0">
-                            <strong>Вероятность:</strong> @((sc.Probability * 100).ToString("N0"))%
-                        </p>
-                    </article>
-                </div>
-            }
-            </div>
-        </details>
-
-        <!-- ================= 8. МАКРО-КОНТЕКСТ + NOTES ================= -->
-        @if (rec.MacroContext.Any())
-        {
-            <div class="alert alert-info mt-4" role="alert">
-                <strong>Макро-контекст</strong>
-                <ul class="mb-0">
-                    @foreach (string line in rec.MacroContext)
-                    {
-                        <li>@line</li>
-                    }
-                </ul>
-            </div>
-        }
-
-        @if (rec.Notes.Any())
-        {
-            <div class="alert alert-warning" role="alert">
-                <strong>Замечания</strong>
-                <ul class="mb-0">
-                    @foreach (string note in rec.Notes)
-                    {
-                        <li>@note</li>
-                    }
-                </ul>
-            </div>
-        }
-
         <!-- ================= 9. ДЕТАЛИ ФРОНТА ================= -->
         <details class="mt-4">
-            <summary>Детали фронта (@rec.FrontExpiration)</summary>
+            <summary>Детали контракта (@rec.FrontExpiration)</summary>
             <div class="option-analysis-container mt-3">
                 <h4>Call/Put Ratio</h4>
                 @Html.Raw(HtmlBuilder.CalculateCallPutRatioHtml(rec.FrontChain))
@@ -563,8 +470,7 @@
         <!-- ================= 10. МЕТОДИЧКА ================= -->
         <p class="mt-3">
             <small class="text-muted">
-                «Объём» здесь = открытый интерес (OI). Расчёт основан на позиционировании опционов
-                и не является инвестиционной рекомендацией.
+                Не является инвестиционной рекомендацией.
             </small>
         </p>
     }

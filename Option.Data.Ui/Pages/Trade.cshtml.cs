@@ -49,15 +49,24 @@ public class TradeModel(
     {
         try
         {
-            string dataCacheKey = $"TradeData_{ViewModel.SelectedCurrencyId}_{ViewModel.SelectedDateTime}";
+            // Всегда последний снимок — выбор среза из UI убран (в прошлое не откатываемся).
+            ViewModel.SelectedDateTime = ViewModel.AvailableDates.LastOrDefault();
+            if (ViewModel.SelectedDateTime == default)
+            {
+                Recommendation = null;
+                return;
+            }
 
-            // Грузим строки последнего снимка по (валюта, дата).
+            DateTimeOffset asOf = ViewModel.SelectedDateTime;
+            string dataCacheKey = $"TradeData_{ViewModel.SelectedCurrencyId}_{asOf}";
+
+            // Строки последнего снимка по валюте (все экспирации).
             List<DeribitData> rows = (await _cache.GetOrCreateAsync(dataCacheKey, async entry =>
             {
                 entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(15);
                 return await _context.DeribitData
                     .Where(d => d.CurrencyTypeId == ViewModel.SelectedCurrencyId &&
-                                d.CreatedAt == ViewModel.SelectedDateTime)
+                                d.CreatedAt == asOf)
                     .ToListAsync();
             }))!;
 
@@ -67,24 +76,43 @@ public class TradeModel(
                 return;
             }
 
-            // Экспирации берём из самого снимка (distinct), сортировка по дате dMMMyy.
+            // Неистёкшие экспирации снимка с открытым интересом, по дате ↑.
             List<string> expirations = rows
-                .Select(d => d.Expiration)
-                .Distinct()
+                .GroupBy(d => d.Expiration)
+                .Where(g => g.Sum(d => d.OpenInterest) > 0 &&
+                            OptionExposureMath.YearsToExpiry(g.Key, asOf) > 0)
+                .Select(g => g.Key)
                 .OrderBy(e => DateTime.ParseExact(e, "dMMMyy", CultureInfo.InvariantCulture))
                 .ToList();
 
-            List<ExpirationAnalysis> analyses =
-                expirationBuilder.Build(rows, expirations, ViewModel.SelectedDateTime);
+            ViewModel.Expirations = expirations;
 
-            if (analyses.Count == 0)
+            if (expirations.Count == 0)
+            {
+                Recommendation = null;
+                return;
+            }
+
+            // Дефолт/валидация: ближайшая неистёкшая, если выбор пуст или вне списка.
+            if (string.IsNullOrEmpty(ViewModel.SelectedExpiration) ||
+                !expirations.Contains(ViewModel.SelectedExpiration))
+            {
+                ViewModel.SelectedExpiration = expirations[0];
+            }
+
+            // Аналитика по одной выбранной экспирации.
+            ExpirationAnalysis? selected = expirationBuilder
+                .Build(rows, [ViewModel.SelectedExpiration], asOf)
+                .FirstOrDefault();
+
+            if (selected is null || selected.OptionData.Count == 0)
             {
                 Recommendation = null;
                 return;
             }
 
             string currency = ViewModel.SelectedCurrencyId == 1 ? "BTC" : "ETH";
-            Recommendation = sessionBuilder.Build(analyses, currency, ViewModel.SelectedDateTime);
+            Recommendation = sessionBuilder.Build(selected, currency, asOf);
         }
         catch (Exception e)
         {
