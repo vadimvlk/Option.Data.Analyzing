@@ -19,6 +19,9 @@ public class TradeModel(
     [BindProperty]
     public SessionRecommendation? Recommendation { get; set; }
 
+    /// <summary>Исторический ряд дельта-экспозиции выбранной экспирации (для графика Delta Exposure).</summary>
+    public List<DeltaPoint> DeltaSeries { get; set; } = new();
+
     private readonly ApplicationDbContext _context = context;
     private readonly IMemoryCache _cache = cache;
     private readonly ILogger<TradeModel> _logger = logger;
@@ -113,6 +116,29 @@ public class TradeModel(
 
             string currency = ViewModel.SelectedCurrencyId == 1 ? "BTC" : "ETH";
             Recommendation = sessionBuilder.Build(selected, currency, asOf);
+
+            // Исторический ряд дельта-экспозиции по выбранной экспирации (как на странице Delta):
+            // −Σ(Δ·OI) по каждому снимку. Отдельный запрос — нужны ВСЕ снимки, а не только последний.
+            string deltaCacheKey = $"TradeDelta_{ViewModel.SelectedCurrencyId}_{ViewModel.SelectedExpiration}";
+            List<DeribitData> deltaRows = (await _cache.GetOrCreateAsync(deltaCacheKey, async entry =>
+            {
+                entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(15);
+                return await _context.DeribitData
+                    .Where(d => d.CurrencyTypeId == ViewModel.SelectedCurrencyId &&
+                                d.Expiration == ViewModel.SelectedExpiration)
+                    .ToListAsync();
+            }))!;
+
+            DeltaSeries = deltaRows
+                .GroupBy(d => d.CreatedAt)
+                .Select(g => new DeltaPoint
+                {
+                    Time = g.Key,
+                    UnderlyingPrice = g.Max(d => d.UnderlyingPrice),
+                    DeltaExposure = -g.Sum(d => d.Delta * d.OpenInterest)
+                })
+                .OrderBy(p => p.Time)
+                .ToList();
         }
         catch (Exception e)
         {

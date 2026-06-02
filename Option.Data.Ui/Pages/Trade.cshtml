@@ -453,6 +453,30 @@
                         <p class="text-muted">Недостаточно данных для построения профиля гаммы.</p>
                     }
                 </article>
+
+                <!-- ================= 4b. DELTA EXPOSURE (история по снимкам) ================= -->
+                <article>
+                    <header><strong>Delta Exposure (по снимкам)</strong></header>
+                    @if (Model.DeltaSeries.Any())
+                    {
+                        <canvas id="deltaChart" height="120"></canvas>
+                        <small class="text-muted d-block mt-2">
+                            Дельта-экспозиция продавца −Σ(Δ·OI) по выбранной экспирации @rec.FrontExpiration за все снимки.
+                        </small>
+
+                        <script id="delta-data" type="application/json">
+                            @Html.Raw(JsonSerializer.Serialize(new
+                                     {
+                                         labels = Model.DeltaSeries.Select(p => p.Time.ToString("g")).ToList(),
+                                         deltas = Model.DeltaSeries.Select(p => p.DeltaExposure).ToList()
+                                     }))
+                        </script>
+                    }
+                    else
+                    {
+                        <p class="text-muted">Недостаточно данных для дельта-ряда.</p>
+                    }
+                </article>
             </div>
         </div>
 
@@ -484,9 +508,13 @@
 </div>
 
 @section Scripts {
-    @if (Model.Recommendation != null && Model.Recommendation.GammaProfile.Any())
+    @if ((Model.Recommendation != null && Model.Recommendation.GammaProfile.Any()) || Model.DeltaSeries.Any())
     {
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    }
+
+    @if (Model.Recommendation != null && Model.Recommendation.GammaProfile.Any())
+    {
         <script>
             (function () {
                 const payload = JSON.parse(document.getElementById('gamma-data').textContent);
@@ -550,6 +578,43 @@
                                     // Нулевая линия выделена (точка flip — там, где профиль пересекает 0).
                                     color: (ctx) => ctx.tick.value === 0 ? '#198754' : 'rgba(0,0,0,0.08)',
                                     lineWidth: (ctx) => ctx.tick.value === 0 ? 1.75 : 1
+                                }
+                            }
+                        }
+                    }
+                });
+            })();
+        </script>
+    }
+
+    @if (Model.DeltaSeries.Any())
+    {
+        <script>
+            (function () {
+                const payload = JSON.parse(document.getElementById('delta-data').textContent);
+
+                new Chart(document.getElementById('deltaChart'), {
+                    type: 'line',
+                    data: {
+                        labels: payload.labels,
+                        datasets: [{
+                            label: 'Delta Exposure',
+                            data: payload.deltas,
+                            borderColor: '#f9844a',
+                            backgroundColor: 'rgba(249,132,74,0.1)',
+                            tension: 0.2,
+                            pointRadius: 2
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        interaction: { mode: 'index', intersect: false },
+                        scales: {
+                            y: {
+                                beginAtZero: false,
+                                grid: {
+                                    color: (ctx) => ctx.tick.value === 0 ? '#343a40' : 'rgba(0,0,0,0.1)',
+                                    lineWidth: (ctx) => ctx.tick.value === 0 ? 1.25 : 1
                                 }
                             }
                         }
