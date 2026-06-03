@@ -22,6 +22,12 @@ public class TradeModel(
     /// <summary>Исторический ряд дельта-экспозиции выбранной экспирации (для графика Delta Exposure).</summary>
     public List<DeltaPoint> DeltaSeries { get; set; } = new();
 
+    /// <summary>Значение опции «Сводка» в селекте экспираций.</summary>
+    public const string AggregateKey = "__AGG__";
+
+    /// <summary>Подпись опции «Сводка» (с кодом квартальной).</summary>
+    public string AggregateLabel { get; set; } = "Сводка";
+
     private readonly ApplicationDbContext _context = context;
     private readonly IMemoryCache _cache = cache;
     private readonly ILogger<TradeModel> _logger = logger;
@@ -96,36 +102,61 @@ public class TradeModel(
                 return;
             }
 
-            // Дефолт/валидация: ближайшая неистёкшая, если выбор пуст или вне списка.
+            // Окно агрегации (ближние + квартальная) и подпись «Сводки» (по самой дальней в окне).
+            List<string> aggWindow = QuarterlyAggregation.WindowExpirations(expirations, asOf);
+            AggregateLabel = aggWindow.Count > 0 ? $"Сводка (до {aggWindow[^1]})" : "Сводка";
+
+            // Дефолт/валидация: «Сводка» допустима; иначе ближайшая неистёкшая.
             if (string.IsNullOrEmpty(ViewModel.SelectedExpiration) ||
-                !expirations.Contains(ViewModel.SelectedExpiration))
+                (ViewModel.SelectedExpiration != AggregateKey &&
+                 !expirations.Contains(ViewModel.SelectedExpiration)))
             {
                 ViewModel.SelectedExpiration = expirations[0];
             }
 
-            // Аналитика по одной выбранной экспирации.
-            ExpirationAnalysis? selected = expirationBuilder
-                .Build(rows, [ViewModel.SelectedExpiration], asOf)
-                .FirstOrDefault();
+            string currency = ViewModel.SelectedCurrencyId == 1 ? "BTC" : "ETH";
+            List<string> deltaExpirations;
 
-            if (selected is null || selected.OptionData.Count == 0)
+            if (ViewModel.SelectedExpiration == AggregateKey)
             {
-                Recommendation = null;
-                return;
+                // Агрегированная сводка: окно ближних + квартальной.
+                List<ExpirationAnalysis> analyses = expirationBuilder.Build(rows, aggWindow, asOf);
+
+                if (analyses.Count == 0)
+                {
+                    Recommendation = null;
+                    return;
+                }
+
+                Recommendation = sessionBuilder.BuildAggregate(analyses, currency, asOf);
+                deltaExpirations = aggWindow;
+            }
+            else
+            {
+                // Одиночная выбранная экспирация.
+                ExpirationAnalysis? selected = expirationBuilder
+                    .Build(rows, [ViewModel.SelectedExpiration], asOf)
+                    .FirstOrDefault();
+
+                if (selected is null || selected.OptionData.Count == 0)
+                {
+                    Recommendation = null;
+                    return;
+                }
+
+                Recommendation = sessionBuilder.Build(selected, currency, asOf);
+                deltaExpirations = [ViewModel.SelectedExpiration];
             }
 
-            string currency = ViewModel.SelectedCurrencyId == 1 ? "BTC" : "ETH";
-            Recommendation = sessionBuilder.Build(selected, currency, asOf);
-
-            // Исторический ряд дельта-экспозиции по выбранной экспирации (как на странице Delta):
-            // −Σ(Δ·OI) по каждому снимку. Отдельный запрос — нужны ВСЕ снимки, а не только последний.
-            string deltaCacheKey = $"TradeDelta_{ViewModel.SelectedCurrencyId}_{ViewModel.SelectedExpiration}";
+            // Исторический ряд дельта-экспозиции: −Σ(Δ·OI) по каждому снимку, по экспирациям
+            // окна/выбора. Отдельный запрос — нужны ВСЕ снимки, а не только последний.
+            string deltaCacheKey = $"TradeDelta_{ViewModel.SelectedCurrencyId}_{string.Join(",", deltaExpirations)}";
             List<DeribitData> deltaRows = (await _cache.GetOrCreateAsync(deltaCacheKey, async entry =>
             {
                 entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(15);
                 return await _context.DeribitData
                     .Where(d => d.CurrencyTypeId == ViewModel.SelectedCurrencyId &&
-                                d.Expiration == ViewModel.SelectedExpiration)
+                                deltaExpirations.Contains(d.Expiration))
                     .ToListAsync();
             }))!;
 

@@ -7,7 +7,7 @@ public enum VolatilityRegime { PositiveGamma, NegativeGamma, Neutral }
 public enum LevelKind { Spot, CallWall, PutWall, MaxPain, GravityEquilibrium, GammaFlip, GammaPeak, Sigma1Up, Sigma1Down, Sigma2Up, Sigma2Down }
 
 /// <summary>Тип действия главной сделки сессии.</summary>
-public enum TradeAction { FadeRange, Breakout, StandAside }
+public enum TradeAction { FadeRange, Breakout, Directional, StandAside }
 
 /// <summary>Сторона главной сделки.</summary>
 public enum TradeSide { Long, Short, None }
@@ -26,6 +26,12 @@ public class SessionRecommendation
     public VolatilityRegime Regime { get; set; }
     public double NetGexAtSpot { get; set; }           // USD/1%
     public double? GammaFlip { get; set; }
+
+    /// <summary>true — режим «Сводка» (агрегат ближних + квартальной экспираций).</summary>
+    public bool IsAggregated { get; set; }
+
+    /// <summary>Число экспираций в окне агрегации (для подписи). 1 — одиночная.</summary>
+    public int AggregatedCount { get; set; } = 1;
 
     public SessionRange Range { get; set; } = new();
 

@@ -256,6 +256,7 @@
             <div>
                 <label for="expiration">Экспирация</label>
                 <select id="expiration" name="ViewModel.SelectedExpiration" required>
+                    <option value="@TradeModel.AggregateKey" selected="@(Model.ViewModel.SelectedExpiration == TradeModel.AggregateKey)">@Model.AggregateLabel</option>
                     @foreach (string exp in Model.ViewModel.Expirations)
                     {
                         <option value="@exp" selected="@(exp == Model.ViewModel.SelectedExpiration)">@exp</option>
@@ -275,7 +276,7 @@
         <!-- ================= 0. ГЛАВНАЯ СДЕЛКА СЕССИИ ================= -->
         <article class="mb-4 border border-@TradeAccent(pt)" style="border-width:2px !important;">
             <header class="d-flex flex-wrap justify-content-between align-items-center gap-2">
-                <strong class="fs-5">СДЕЛКА СЕССИИ — @rec.Currency, спот @rec.Spot.ToString("N2")</strong>
+                <strong class="fs-5">@(rec.IsAggregated ? "СВОДКА" : "СДЕЛКА СЕССИИ") — @rec.Currency, спот @rec.Spot.ToString("N2")</strong>
                 <span class="d-flex flex-wrap gap-2">
                     <span class="badge bg-@TradeAccent(pt) fs-6">@pt.Headline</span>
                     <span class="badge @ConvBadgeClass(pt.Conviction)">конвикция @pt.Conviction/100 · @pt.ConvictionLabel</span>
@@ -293,7 +294,7 @@
                     <div>
                         <p class="mb-1">
                             <strong>Сторона:</strong> @SideText(pt.Side) ·
-                            до экспирации @rec.FrontExpiration: @TimeToExpiryText(rec.FrontDaysToExpiry, rec.HoursToFrontExpiry)
+                            @(rec.IsAggregated ? "горизонт до" : "до экспирации") @rec.FrontExpiration: @TimeToExpiryText(rec.FrontDaysToExpiry, rec.HoursToFrontExpiry)
                         </p>
                         <p class="mb-1"><strong>Зона входа:</strong>
                             <span class="text-primary">@(pt.EntryLow?.ToString("N2") ?? "—") … @(pt.EntryHigh?.ToString("N2") ?? "—")</span>
@@ -342,7 +343,7 @@
                 <div class="d-flex flex-wrap justify-content-between align-items-baseline">
                     <h3 class="mb-1">@rec.Currency — спот @rec.Spot.ToString("N2")</h3>
                     <span class="text-muted">
-                        до экспирации @rec.FrontExpiration: @TimeToExpiryText(rec.FrontDaysToExpiry, rec.HoursToFrontExpiry)
+                        @(rec.IsAggregated ? "горизонт до" : "до экспирации") @rec.FrontExpiration: @TimeToExpiryText(rec.FrontDaysToExpiry, rec.HoursToFrontExpiry)@(rec.IsAggregated ? $" · агрегировано {rec.AggregatedCount} эксп." : "")
                     </span>
                 </div>
             </header>
@@ -358,21 +359,21 @@
 
             <div class="grid">
                 <div>
-                    <strong>Диапазон 1σ (до экспирации):</strong>
+                    <strong>Диапазон 1σ (@(rec.IsAggregated ? "до дальней эксп." : "до экспирации")):</strong>
                     <span class="text-danger">@range.Lower1.ToString("N2")</span>
                     …
                     <span class="text-success">@range.Upper1.ToString("N2")</span>
                 </div>
                 <div>
-                    <strong>Диапазон 2σ (до экспирации):</strong>
+                    <strong>Диапазон 2σ (@(rec.IsAggregated ? "до дальней эксп." : "до экспирации")):</strong>
                     <span class="text-danger">@range.Lower2.ToString("N2")</span>
                     …
                     <span class="text-success">@range.Upper2.ToString("N2")</span>
                 </div>
             </div>
             <small class="text-muted d-block mt-1">
-                Диапазон рассчитан до выбранной экспирации @rec.FrontExpiration,
-                σ_ATM @range.AtmIvPercent.ToString("N1")% годовых.
+                Диапазон рассчитан до @(rec.IsAggregated ? "дальней экспирации сводки" : "выбранной экспирации") @rec.FrontExpiration,
+                σ_ATM @range.AtmIvPercent.ToString("N1")% годовых.@(rec.IsAggregated ? " Карта и профиль агрегированы по ближним + квартальной." : "")
             </small>
         </article>
 
@@ -461,7 +462,7 @@
                     {
                         <canvas id="deltaChart" height="120"></canvas>
                         <small class="text-muted d-block mt-2">
-                            Дельта-экспозиция продавца −Σ(Δ·OI) по выбранной экспирации @rec.FrontExpiration за все снимки.
+                            Дельта-экспозиция продавца −Σ(Δ·OI) по @(rec.IsAggregated ? $"сводке ({rec.AggregatedCount} эксп.)" : $"экспирации {rec.FrontExpiration}") за все снимки.
                         </small>
 
                         <script id="delta-data" type="application/json">
@@ -482,7 +483,7 @@
 
         <!-- ================= 9. ДЕТАЛИ ФРОНТА ================= -->
         <details class="mt-4">
-            <summary>Детали контракта (@rec.FrontExpiration)</summary>
+            <summary>Детали контракта (@(rec.IsAggregated ? $"сводка, {rec.AggregatedCount} эксп." : rec.FrontExpiration))</summary>
             <div class="option-analysis-container mt-3">
                 <h4>Call/Put Ratio</h4>
                 @Html.Raw(HtmlBuilder.CalculateCallPutRatioHtml(rec.FrontChain))
