@@ -48,8 +48,23 @@ public class DeltaModel(
             if (rows.Count == 0)
                 return Page();
 
-            // Дельта-экспозиция по времени (как раньше).
+            // Снимки выбранной экспирации (для селектора среза), по возрастанию.
+            List<DateTimeOffset> snapshots = rows
+                .Select(r => r.CreatedAt)
+                .Distinct()
+                .OrderBy(d => d)
+                .ToList();
+            ViewModel.AvailableDates = snapshots;
+
+            // as-of: выбранный срез, если он есть среди снимков экспирации; иначе последний.
+            DateTimeOffset asOf = snapshots.Contains(ViewModel.SelectedDateTime)
+                ? ViewModel.SelectedDateTime
+                : snapshots[^1];
+            ViewModel.SelectedDateTime = asOf;
+
+            // Дельта-экспозиция по времени — ДО выбранного среза включительно.
             DeltaViewModel.Series = rows
+                .Where(d => d.CreatedAt <= asOf)
                 .GroupBy(d => d.CreatedAt)
                 .Select(g => new DeltaPoint
                 {
@@ -60,8 +75,8 @@ public class DeltaModel(
                 .OrderBy(p => p.Time)
                 .ToList();
 
-            // Гамма: профиль Net GEX по цене и разбивка по страйкам для последнего снимка.
-            BuildGamma(rows);
+            // Гамма: профиль Net GEX по цене и разбивка по страйкам для ВЫБРАННОГО среза.
+            BuildGamma(rows, asOf);
 
             return Page();
         }
@@ -75,24 +90,23 @@ public class DeltaModel(
 
     /// <summary>
     /// Считает профиль Net GEX по цене (Black-76), gamma-flip и вклад каждого страйка
-    /// для ПОСЛЕДНЕГО снимка выбранной экспирации. Все величины согласованы между собой
-    /// (один источник — <see cref="SessionAnalysisMath"/>).
+    /// для ВЫБРАННОГО среза <paramref name="asOf"/> выбранной экспирации. Все величины
+    /// согласованы между собой (один источник — <see cref="SessionAnalysisMath"/>).
     /// </summary>
-    private void BuildGamma(List<DeribitData> rows)
+    private void BuildGamma(List<DeribitData> rows, DateTimeOffset asOf)
     {
-        DateTimeOffset latest = rows.Max(r => r.CreatedAt);
-        List<DeribitData> latestRows = rows.Where(r => r.CreatedAt == latest).ToList();
-        if (latestRows.Count == 0)
+        List<DeribitData> snapshotRows = rows.Where(r => r.CreatedAt == asOf).ToList();
+        if (snapshotRows.Count == 0)
             return;
 
-        double spot = latestRows.Max(r => r.UnderlyingPrice);
+        double spot = snapshotRows.Max(r => r.UnderlyingPrice);
         if (spot <= 0 || !double.IsFinite(spot))
             return;
 
-        double tYears = OptionExposureMath.YearsToExpiry(ViewModel.SelectedExpiration, latest);
+        double tYears = OptionExposureMath.YearsToExpiry(ViewModel.SelectedExpiration, asOf);
 
         // Цепочка по страйку: Call = OptionTypeId 1, Put = 2.
-        List<SessionAnalysisMath.GammaStrike> strikes = latestRows
+        List<SessionAnalysisMath.GammaStrike> strikes = snapshotRows
             .GroupBy(r => r.Strike)
             .Select(g =>
             {

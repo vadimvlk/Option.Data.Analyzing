@@ -23,6 +23,25 @@
                 }
             </select>
         </div>
+
+        @if (Model.ViewModel.AvailableDates.Any())
+        {
+            <div>
+                <label for="datetime">Снимок (срез)</label>
+                <select id="datetime" name="ViewModel.SelectedDateTime">
+                    @{
+                        List<DateTimeOffset> orderedDates = Model.ViewModel.AvailableDates.OrderBy(d => d).ToList();
+                        var lastDate = orderedDates.LastOrDefault();
+                        var selectedDate = Model.ViewModel.SelectedDateTime != default ? Model.ViewModel.SelectedDateTime : lastDate;
+                    }
+                    @foreach (var date in orderedDates)
+                    {
+                        <option value="@date.ToString("o")" selected="@(date == selectedDate)">@date.ToString("g")</option>
+                    }
+                </select>
+                <small>Срез: с @orderedDates.Min().ToString("g") по @orderedDates.Max().ToString("g")</small>
+            </div>
+        }
     </div>
     <button type="submit" asp-page-handler="" class="contrast">Load Data</button>
 </form>
