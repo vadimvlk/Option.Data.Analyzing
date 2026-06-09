@@ -51,13 +51,13 @@
         <h4>@Model.ViewModel.SelectedExchange · @(Model.ViewModel.SelectedCurrencyId == 1 ? "BTC" : "ETH") - @Model.ViewModel.SelectedExpiration
             Underlying Price: @Model.ViewModel.UnderlyingPrice.ToString("N2")
         </h4>
+        <partial name="_GammaProfile" model="Model.Gamma"/>
+
         <div class="option-analysis-container mt-4">
             @Html.Raw(HtmlBuilder.AnalyzeCentersOfGravityHtml(Model.ViewModel.OptionData, Model.ViewModel.UnderlyingPrice))
             @Html.Raw(HtmlBuilder.AnalyzeGlobalSellerPositionHtml(Model.ViewModel.OptionData, Model.ViewModel.UnderlyingPrice))
             @Html.Raw(HtmlBuilder.CalculateCallPutRatioHtml(Model.ViewModel.OptionData))
         </div>
-
-        <partial name="_GammaProfile" model="Model.Gamma"/>
     }
     else
     {
