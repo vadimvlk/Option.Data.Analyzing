@@ -27,11 +27,17 @@ builder.Logging.AddSerilog(Log.Logger, true);
 builder.Services.RegisterData(builder.Configuration);
 
 builder.AddDeribitClientConfiguration();
+builder.AddBinanceClientConfiguration();
 
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IOptionsAnalysisHtmlBuilder, OptionsAnalysisHtmlBuilder>();
 builder.Services.AddSingleton<IExpirationAnalysisBuilder, ExpirationAnalysisBuilder>();
 builder.Services.AddSingleton<ISessionRecommendationBuilder, SessionRecommendationBuilder>();
+
+// Источники доски опционов (Snapshot) + резолвер по выбранной бирже.
+builder.Services.AddScoped<IOptionBoardSource, DeribitOptionBoardSource>();
+builder.Services.AddScoped<IOptionBoardSource, BinanceOptionBoardSource>();
+builder.Services.AddScoped<IOptionBoardSourceResolver, OptionBoardSourceResolver>();
 var app = builder.Build();
 
 ForwardedHeadersOptions options = new ()

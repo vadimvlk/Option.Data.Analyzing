@@ -60,4 +60,25 @@ public static class Registration
 
         return builder;
     }
+
+    public static WebApplicationBuilder AddBinanceClientConfiguration(this WebApplicationBuilder builder)
+    {
+        IConfigurationSection section = builder.Configuration.GetSection("Binance");
+
+        builder.Services.Configure<BinanceConfig>(section);
+
+        BinanceConfig config = section.Get<BinanceConfig>() ?? new BinanceConfig();
+
+        // На проде appsettings монтируется извне и может не содержать секцию Binance —
+        // подставляем дефолтный публичный хост, чтобы старт приложения не падал.
+        string baseAddress = string.IsNullOrWhiteSpace(config.BaseAddress)
+            ? "https://eapi.binance.com/"
+            : config.BaseAddress;
+
+        builder.Services.AddHttpClient(BinanceConfig.ClientName)
+            .ConfigureHttpClient(c => { c.BaseAddress = new Uri(baseAddress); })
+            .AddPolicyHandler(Helpers.GetRetryPolicy());
+
+        return builder;
+    }
 }

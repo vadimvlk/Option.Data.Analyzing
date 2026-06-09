@@ -5,6 +5,9 @@ namespace Option.Data.Ui.Models;
 
 public class OptionViewModel
 {
+    /// <summary>Выбранная биржа-источник (Snapshot). По умолчанию Deribit.</summary>
+    public ExchangeSource SelectedExchange { get; set; } = ExchangeSource.Deribit;
+
     public int SelectedCurrencyId { get; set; }
     public double UnderlyingPrice { get; set; }
     public string SelectedExpiration { get; set; } = string.Empty;

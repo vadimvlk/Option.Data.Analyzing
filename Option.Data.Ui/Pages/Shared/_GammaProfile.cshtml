@@ -1,0 +1,117 @@
+@using System.Text.Json
+@model Option.Data.Ui.Models.GammaView
+
+@if (Model.HasData)
+{
+    <article>
+        <h5>Профиль гаммы (Net GEX, USD/1%)</h5>
+        <canvas id="gammaChart" height="110"></canvas>
+        <small class="text-muted d-block mt-2">
+            Net GEX у спота:
+            <span class="@(Model.NetGexAtSpot >= 0 ? "text-success" : "text-danger")">@Model.NetGexAtSpot.ToString("N0")</span>
+            @if (Model.GammaFlip.HasValue)
+            {
+                @:· Gamma Flip: @Model.GammaFlip.Value.ToString("N2")
+            }
+            · live-снимок (Black-76 по mark IV)
+        </small>
+    </article>
+    <article>
+        <h5>Net GEX по страйкам (USD/1%)</h5>
+        <canvas id="strikeGexChart" height="110"></canvas>
+        <small class="text-muted d-block mt-2">
+            Вклад каждого страйка в Net GEX у спота. Зелёные столбцы — перевес коллов
+            (дилеры гасят волатильность), красные — путов (усиливают движение).
+        </small>
+    </article>
+
+    <script id="gamma-data" type="application/json">
+        @Html.Raw(JsonSerializer.Serialize(new
+                 {
+                     points = Model.GammaProfile.Select(p => new { x = p.Price, y = p.NetGex }).ToList(),
+                     spot = Model.Spot,
+                     flip = Model.GammaFlip,
+                     strikes = Model.StrikeGex.Select(s => s.Strike).ToList(),
+                     strikeGex = Model.StrikeGex.Select(s => s.NetGex).ToList()
+                 }))
+    </script>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        (function () {
+            const g = JSON.parse(document.getElementById('gamma-data').textContent);
+
+            // --- Профиль Net GEX по цене (Black-76) ---
+            const ys = g.points.map(p => p.y);
+            const yMin = Math.min.apply(null, ys);
+            const yMax = Math.max.apply(null, ys);
+
+            const gammaDatasets = [{
+                label: 'Net GEX (USD/1%)',
+                data: g.points, parsing: false,
+                borderColor: '#4361ee', backgroundColor: 'rgba(67,97,238,0.1)',
+                borderWidth: 1.75, pointRadius: 0, tension: 0.15, fill: false
+            }, {
+                label: 'Спот',
+                data: [{ x: g.spot, y: yMin }, { x: g.spot, y: yMax }], parsing: false,
+                borderColor: '#111827', borderWidth: 1.5, borderDash: [6, 4], pointRadius: 0, fill: false
+            }];
+
+            if (g.flip !== null && g.flip !== undefined) {
+                gammaDatasets.push({
+                    label: 'Gamma Flip',
+                    data: [{ x: g.flip, y: yMin }, { x: g.flip, y: yMax }], parsing: false,
+                    borderColor: '#dc3545', borderWidth: 1.25, borderDash: [2, 3], pointRadius: 0, fill: false
+                });
+            }
+
+            new Chart(document.getElementById('gammaChart'), {
+                type: 'line',
+                data: { datasets: gammaDatasets },
+                options: {
+                    responsive: true,
+                    interaction: { mode: 'nearest', intersect: false },
+                    scales: {
+                        x: { type: 'linear', title: { display: true, text: 'Цена' } },
+                        y: {
+                            beginAtZero: false, title: { display: true, text: 'Net GEX' },
+                            grid: {
+                                color: (ctx) => ctx.tick.value === 0 ? '#198754' : 'rgba(0,0,0,0.08)',
+                                lineWidth: (ctx) => ctx.tick.value === 0 ? 1.75 : 1
+                            }
+                        }
+                    }
+                }
+            });
+
+            // --- Net GEX по каждому страйку ---
+            new Chart(document.getElementById('strikeGexChart'), {
+                type: 'bar',
+                data: {
+                    labels: g.strikes,
+                    datasets: [{
+                        label: 'Net GEX по страйку',
+                        data: g.strikeGex,
+                        backgroundColor: g.strikeGex.map(v => v >= 0 ? 'rgba(25,135,84,0.65)' : 'rgba(220,53,69,0.65)'),
+                        borderColor: g.strikeGex.map(v => v >= 0 ? '#198754' : '#dc3545'),
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { title: { display: true, text: 'Страйк' } },
+                        y: {
+                            title: { display: true, text: 'Net GEX (USD/1%)' },
+                            grid: {
+                                color: (ctx) => ctx.tick.value === 0 ? '#343a40' : 'rgba(0,0,0,0.08)',
+                                lineWidth: (ctx) => ctx.tick.value === 0 ? 1.25 : 1
+                            }
+                        }
+                    }
+                }
+            });
+        })();
+    </script>
+}
