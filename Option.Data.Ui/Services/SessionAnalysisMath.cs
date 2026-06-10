@@ -317,6 +317,13 @@ public static class SessionAnalysisMath
     private const int MinResidualWindow = 8;
 
     /// <summary>
+    /// Масштаб tanh для тренда потока: голос = tanh(rel/0.15). По году снимков BTC/ETH
+    /// p75 |rel| ≈ 0.03–0.04 (голос ≈ 0.2–0.27); порог FlowEpsilon=0.05 в билдере проходится
+    /// от |rel| ≈ 0.0075 — сигнал активен ~58–64% снимков. КАЛИБРУЕМО (бэктест 2026-06-10).
+    /// </summary>
+    private const double FlowSensitivity = 0.15;
+
+    /// <summary>
     /// Тренд ПОТОКА дельта-экспозиции по истории снимков, −1…+1 (знак ИЗМЕНЕНИЯ DEX, очищенного
     /// от механического влияния цены; НЕ направленный бычий/медвежий знак).
     ///
@@ -330,9 +337,12 @@ public static class SessionAnalysisMath
     /// (вызывающий уходит в задемпфированный статический DEX). Если точек хватает, но цена в окне почти
     /// не двигалась (вырожденная дисперсия S) — берём сырой тренд: загрязнения в нём нет по построению.
     /// Когда цена сильно трендит и DEX идёт за ней, остатки ≈ 0 ⇒ сигнал ВЫКЛЮЧАЕТСЯ (а не врёт
-    /// momentum'ом). Нормировка — на средний |DEX| окна, затем tanh. 0 — точек &lt; <see cref="MinResidualWindow"/>
-    /// или вырожденные данные.
-    /// Интерпретация знака — на стороне вызывающего (рост дилерского DEX ⇒ хедж-давление вниз).
+    /// momentum'ом). Нормировка — на средний |DEX| окна, затем tanh(rel/<see cref="FlowSensitivity"/>).
+    /// 0 — точек &lt; <see cref="MinResidualWindow"/> или вырожденные данные.
+    /// Интерпретация знака — на стороне вызывающего. Эмпирика (бэктест на годе снимков BTC/ETH,
+    /// 2026-06-10: IC&gt;0 на горизонтах 6/12/24ч на обеих монетах): РОСТ очищенного DEX
+    /// (накопление защитных позиций сверх ценовой механики) опережает РОСТ цены — контрарный
+    /// маркер, а не «хедж-давление вниз», как предсказывала дилерская трактовка.
     /// </summary>
     public static double DexTrend(IReadOnlyList<DeltaPoint> series, int window = 12)
     {
@@ -427,10 +437,11 @@ public static class SessionAnalysisMath
         if (sxx <= 0)
             return 0;
 
-        // Суммарное изменение за окно в долях среднего |DEX|: наклон·(n−1)/mean|DEX|.
+        // Суммарное изменение за окно в долях среднего |DEX|: наклон·(n−1)/mean|DEX|,
+        // далее tanh с откалиброванной чувствительностью.
         double slopePerStep = sxy / sxx;
         double relChange = slopePerStep * (n - 1) / meanAbs;
-        double t = Math.Tanh(relChange);
+        double t = Math.Tanh(relChange / FlowSensitivity);
         return double.IsFinite(t) ? Clamp(t, -1, 1) : 0;
     }
 

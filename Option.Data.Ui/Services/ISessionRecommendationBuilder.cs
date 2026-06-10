@@ -5,8 +5,9 @@ namespace Option.Data.Ui.Services;
 public interface ISessionRecommendationBuilder
 {
     /// <param name="dexFlowTrend">
-    /// Тренд дельта-экспозиции по истории снимков, −1…+1 (см. <see cref="SessionAnalysisMath.DexTrend"/>):
-    /// &gt;0 — DEX растёт (хедж-давление вниз), &lt;0 — падает (давление вверх), 0 — нет истории.
+    /// Тренд очищенного от цены потока дельта-экспозиции, −1…+1 (см. <see cref="SessionAnalysisMath.DexTrend"/>):
+    /// &gt;0 — DEX растёт (накопление защитных позиций; эмпирически контрарно-бычий маркер),
+    /// &lt;0 — падает (разгрузка защиты; медвежий), 0 — нет истории/сигнала.
     /// </param>
     SessionRecommendation Build(
         ExpirationAnalysis selected,

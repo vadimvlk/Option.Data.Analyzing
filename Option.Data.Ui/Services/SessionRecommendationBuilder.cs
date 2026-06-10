@@ -117,7 +117,7 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
         List<SessionAnalysisMath.GammaStrike> gammaStrikes = BuildGammaStrikes(selected, asOf);
 
         return Assemble(currency, asOf, selected.Expiration, tYears * 365.0, spot,
-            gammaStrikes, selected.OptionData, atmIv, tYears,
+            gammaStrikes, selected.OptionData, atmIv, sessionIv: atmIv, tYears,
             selected.DollarDeltaExposure, dexFlowTrend, selected.RiskReversal25Delta,
             isAggregated: false, aggregatedCount: 1);
     }
@@ -157,8 +157,13 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
         double dexRaw = window.Sum(a => a.DollarDeltaExposure);
         double? rr25 = byT.Select(a => a.RiskReversal25Delta).FirstOrDefault(v => v.HasValue);
 
+        // σ сессии — по ATM IV БЛИЖАЙШЕЙ экспирации окна: суточный масштаб задаёт фронт,
+        // а не квартальная (term structure искажал бы зоны входа/стопы).
+        ExpirationAnalysis front = byT[0];
+        double sessionIv = OptionExposureMath.AtmIvFraction(front.OptionData, front.UnderlyingPrice);
+
         return Assemble(currency, asOf, horizon.Expiration, tYears * 365.0, spot,
-            gammaStrikes, chain, atmIv, tYears, dexRaw, dexFlowTrend, rr25,
+            gammaStrikes, chain, atmIv, sessionIv, tYears, dexRaw, dexFlowTrend, rr25,
             isAggregated: true, aggregatedCount: window.Count);
     }
 
@@ -183,13 +188,15 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
     /// <summary>
     /// Общее ядро плана: лог-нормальный σ-диапазон + σ сессии, профиль гаммы, режим,
     /// GEX-стены и пин, уровни, прозрачные сигналы направления и сделка по режиму.
+    /// <paramref name="atmIv"/> — IV горизонта (σ-границы до экспирации);
+    /// <paramref name="sessionIv"/> — IV для σ СЕССИИ (в «Сводке» — ближайшая экспирация окна).
     /// </summary>
     private SessionRecommendation Assemble(
         string currency, DateTimeOffset asOf,
         string expirationLabel, double horizonDte, double spot,
         List<SessionAnalysisMath.GammaStrike> gammaStrikes,
         IReadOnlyList<OptionData> chain,
-        double atmIv, double tYears,
+        double atmIv, double sessionIv, double tYears,
         double dexRaw, double dexFlowTrend, double? rr25,
         bool isAggregated, int aggregatedCount)
     {
@@ -220,10 +227,12 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
             return rec;
         }
 
-        // σ-границы до горизонта — лог-нормальные; зоны входа/стопы — в σ СЕССИИ.
+        // σ-границы до горизонта — лог-нормальные (IV горизонта); зоны входа/стопы — в σ СЕССИИ
+        // (IV ближайшей экспирации: суточный масштаб задаёт фронт).
         (double lower1, double upper1) = SessionAnalysisMath.LogNormalBand(spot, atmIv, tYears, 1);
         (double lower2, double upper2) = SessionAnalysisMath.LogNormalBand(spot, atmIv, tYears, 2);
-        double sessionSigma = SessionAnalysisMath.SessionSigmaUsd(spot, atmIv, tYears);
+        double sessionSigma = SessionAnalysisMath.SessionSigmaUsd(
+            spot, sessionIv > 0 ? sessionIv : atmIv, tYears);
 
         rec.Range = new SessionRange
         {
@@ -386,17 +395,21 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
         // --- 2. Поток (ΔDEX по снимкам); фолбэк — ослабленный статический DEX ---
         if (Math.Abs(dexFlowTrend) >= FlowEpsilon)
         {
-            // Рост дилерского DEX ⇒ хедж-давление вниз (дилер продаёт), падение ⇒ вверх.
-            double vote = -SessionAnalysisMath.Clamp(dexFlowTrend, -1, 1);
+            // ЗНАК ЭМПИРИЧЕСКИЙ (бэктест на годе снимков BTC/ETH, 2026-06-10: IC>0 на 6/12/24ч
+            // на обеих монетах; дилерская трактовка «DEX↑ → хедж-давление вниз» давала IC<0 во
+            // всех ячейках). Рост очищенного от цены DEX = накопление путов/разгрузка коллов —
+            // спрос на защиту, контрарно-бычий маркер; падение — разгрузка защиты, медвежий.
+            double vote = SessionAnalysisMath.Clamp(dexFlowTrend, -1, 1);
             components.Add(new BiasComponent
             {
                 Name = "Поток ΔDEX",
                 RawValue = dexFlowTrend,
                 Normalized = vote,
                 Weight = WeightFlow,
-                Explanation = $"поток дельта-экспозиции (очищенный от влияния цены) по последним снимкам " +
-                              $"{(dexFlowTrend > 0 ? "растёт" : "падает")} → хедж-поток " +
-                              $"{(vote >= 0 ? "покупает (вверх)" : "продаёт (вниз)")}."
+                Explanation = $"очищенный от движения цены поток дельта-экспозиции " +
+                              $"{(dexFlowTrend > 0
+                                  ? "растёт — накопление защитных позиций (контрарно: вверх)"
+                                  : "падает — разгрузка защиты (контрарно: вниз)")}."
             });
         }
         else if (dexRaw != 0 && totalOi > 0 && double.IsFinite(totalOi))
@@ -409,7 +422,10 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
                 RawValue = dexRaw,
                 Normalized = vote,
                 Weight = WeightFlow,
-                Explanation = $"тренд DEX недоступен; уровень DEX {FmtUsd(dexRaw)} " +
+                Explanation = $"{(dexFlowTrend == 0
+                                  ? "поток ΔDEX недоступен (нет истории)"
+                                  : $"поток ΔDEX слабый ({dexFlowTrend.ToString("+0.00;-0.00", CultureInfo.InvariantCulture)} — ниже порога)")}; " +
+                              $"уровень DEX {FmtUsd(dexRaw)} " +
                               $"({(dexRaw > 0 ? "дилер продаёт" : "дилер покупает")}) — ослабленный сигнал " +
                               $"{(vote >= 0 ? "вверх" : "вниз")}."
             });

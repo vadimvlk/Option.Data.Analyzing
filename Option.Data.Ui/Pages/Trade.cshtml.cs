@@ -106,12 +106,13 @@ public class TradeModel(
             List<string> aggWindow = QuarterlyAggregation.WindowExpirations(expirations, asOf);
             AggregateLabel = aggWindow.Count > 0 ? $"Сводка (до {aggWindow[^1]})" : "Сводка";
 
-            // Дефолт/валидация: «Сводка» допустима; иначе ближайшая неистёкшая.
+            // Дефолт — «Сводка» (агрегат до квартальной): самый богатый набор данных,
+            // на нём же калибровались сигналы. Невалидный выбор тоже сводим к ней.
             if (string.IsNullOrEmpty(ViewModel.SelectedExpiration) ||
                 (ViewModel.SelectedExpiration != AggregateKey &&
                  !expirations.Contains(ViewModel.SelectedExpiration)))
             {
-                ViewModel.SelectedExpiration = expirations[0];
+                ViewModel.SelectedExpiration = AggregateKey;
             }
 
             string currency = ViewModel.SelectedCurrencyId == 1 ? "BTC" : "ETH";
