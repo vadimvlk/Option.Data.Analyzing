@@ -394,8 +394,9 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
                 RawValue = dexFlowTrend,
                 Normalized = vote,
                 Weight = WeightFlow,
-                Explanation = $"дельта-экспозиция по последним снимкам {(dexFlowTrend > 0 ? "растёт" : "падает")} " +
-                              $"→ хедж-поток {(vote >= 0 ? "покупает (вверх)" : "продаёт (вниз)")}."
+                Explanation = $"поток дельта-экспозиции (очищенный от влияния цены) по последним снимкам " +
+                              $"{(dexFlowTrend > 0 ? "растёт" : "падает")} → хедж-поток " +
+                              $"{(vote >= 0 ? "покупает (вверх)" : "продаёт (вниз)")}."
             });
         }
         else if (dexRaw != 0 && totalOi > 0 && double.IsFinite(totalOi))

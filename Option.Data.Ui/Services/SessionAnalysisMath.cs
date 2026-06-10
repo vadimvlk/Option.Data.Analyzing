@@ -313,41 +313,115 @@ public static class SessionAnalysisMath
         return (double.IsFinite(lower) ? lower : spot, double.IsFinite(upper) ? upper : spot);
     }
 
+    /// <summary>Минимальное окно для резидуализации потока по цене (оценка наклона + тренд остатков).</summary>
+    private const int MinResidualWindow = 8;
+
     /// <summary>
-    /// Тренд дельта-экспозиции по истории снимков, −1…+1 (НЕ направленный бычий/медвежий знак,
-    /// а знак ИЗМЕНЕНИЯ DEX: &gt;0 — DEX растёт). Считается как наклон линейной регрессии
-    /// DeltaExposure по последним <paramref name="window"/> точкам, нормированный на средний
-    /// |DEX| окна и пропущенный через tanh. 0 — мало точек (&lt;4) или вырожденные данные.
+    /// Тренд ПОТОКА дельта-экспозиции по истории снимков, −1…+1 (знак ИЗМЕНЕНИЯ DEX, очищенного
+    /// от механического влияния цены; НЕ направленный бычий/медвежий знак).
+    ///
+    /// Сырой ряд <see cref="DeltaPoint.DeltaExposure"/> = −Σ(Δ·OI) движется в основном механически:
+    /// Δ[−Σ(Δ·OI)] ≈ −Σ(γ·OI)·ΔS − Σ(Δ·ΔOI). Первый член (∝ движению цены, коэффициент −Σγ·OI&lt;0)
+    /// доминирует, поэтому «тренд сырого DEX» ≈ инверсия ценового тренда, а не поток дилеров.
+    /// Поэтому при окне ≥ <see cref="MinResidualWindow"/> точек DEX РЕЗИДУАЛИЗИРУЕТСЯ по цене:
+    /// OLS DEXₜ = a + b·Sₜ (b оценивает −Σγ·OI из самих данных), тренд берётся по ОСТАТКАМ εₜ —
+    /// это перепозиционирование, не объяснённое движением цены. Если точек &lt; <see cref="MinResidualWindow"/>,
+    /// резидуализация невозможна, а сырой тренд = тот самый momentum-артефакт — поэтому возвращаем 0
+    /// (вызывающий уходит в задемпфированный статический DEX). Если точек хватает, но цена в окне почти
+    /// не двигалась (вырожденная дисперсия S) — берём сырой тренд: загрязнения в нём нет по построению.
+    /// Когда цена сильно трендит и DEX идёт за ней, остатки ≈ 0 ⇒ сигнал ВЫКЛЮЧАЕТСЯ (а не врёт
+    /// momentum'ом). Нормировка — на средний |DEX| окна, затем tanh. 0 — точек &lt; <see cref="MinResidualWindow"/>
+    /// или вырожденные данные.
     /// Интерпретация знака — на стороне вызывающего (рост дилерского DEX ⇒ хедж-давление вниз).
     /// </summary>
     public static double DexTrend(IReadOnlyList<DeltaPoint> series, int window = 12)
     {
-        if (series is null || series.Count < 4 || window < 4)
+        if (series is null || window < 1)
             return 0;
 
         int n = Math.Min(window, series.Count);
+
+        // Тренд потока требует резидуализации по цене (≥ MinResidualWindow точек). При меньшем окне
+        // резидуализировать нечем, а сырой тренд DEX = ценовой momentum-артефакт в полную силу —
+        // поэтому сигнал НЕ выдаём (0); билдер уйдёт в задемпфированный статический DEX.
+        if (n < MinResidualWindow)
+            return 0;
+
         int start = series.Count - n;
 
-        double meanX = (n - 1) / 2.0;
-        double meanY = 0, meanAbs = 0;
+        // Средний |DEX| окна — общая нормировка (масштаб одинаков для residual- и raw-веток).
+        double meanAbs = 0;
         for (int i = 0; i < n; i++)
         {
             double y = series[start + i].DeltaExposure;
             if (!double.IsFinite(y))
                 return 0;
-            meanY += y;
             meanAbs += Math.Abs(y);
         }
-        meanY /= n;
         meanAbs /= n;
         if (meanAbs <= 0)
             return 0;
+
+        // Значения, по которым берётся тренд: остатки регрессии DEX по цене либо (плоская цена) сырой DEX.
+        var vals = new double[n];
+        bool residualized = false;
+
+        double meanS = 0, meanY = 0;
+        for (int i = 0; i < n; i++)
+        {
+            double s = series[start + i].UnderlyingPrice;
+            if (!double.IsFinite(s))
+            {
+                meanS = double.NaN;
+                break;
+            }
+            meanS += s;
+            meanY += series[start + i].DeltaExposure;
+        }
+
+        if (double.IsFinite(meanS))
+        {
+            meanS /= n;
+            meanY /= n;
+
+            double sSS = 0, sSY = 0;
+            for (int i = 0; i < n; i++)
+            {
+                double ds = series[start + i].UnderlyingPrice - meanS;
+                sSS += ds * ds;
+                sSY += ds * (series[start + i].DeltaExposure - meanY);
+            }
+
+            // Достаточная дисперсия цены ⇒ есть что вычитать. b≈−Σγ·OI, остаток = поток.
+            if (sSS > 0 && double.IsFinite(sSS))
+            {
+                double b = sSY / sSS;
+                double a = meanY - b * meanS;
+                for (int i = 0; i < n; i++)
+                    vals[i] = series[start + i].DeltaExposure - (a + b * series[start + i].UnderlyingPrice);
+                residualized = true;
+            }
+        }
+
+        if (!residualized)
+        {
+            // Цена в окне практически не двигалась → загрязнения в сыром DEX нет по построению.
+            for (int i = 0; i < n; i++)
+                vals[i] = series[start + i].DeltaExposure;
+        }
+
+        // Тренд (наклон линейной регрессии vals по индексу).
+        double meanX = (n - 1) / 2.0;
+        double meanV = 0;
+        for (int i = 0; i < n; i++)
+            meanV += vals[i];
+        meanV /= n;
 
         double sxy = 0, sxx = 0;
         for (int i = 0; i < n; i++)
         {
             double dx = i - meanX;
-            sxy += dx * (series[start + i].DeltaExposure - meanY);
+            sxy += dx * (vals[i] - meanV);
             sxx += dx * dx;
         }
         if (sxx <= 0)
