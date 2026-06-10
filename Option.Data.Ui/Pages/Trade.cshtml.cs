@@ -115,9 +115,39 @@ public class TradeModel(
             }
 
             string currency = ViewModel.SelectedCurrencyId == 1 ? "BTC" : "ETH";
-            List<string> deltaExpirations;
 
-            if (ViewModel.SelectedExpiration == AggregateKey)
+            // Экспирации дельта-ряда определяются ДО построения рекомендации:
+            // тренд потока DEX по истории снимков — один из сигналов направления.
+            bool isAggregate = ViewModel.SelectedExpiration == AggregateKey;
+            List<string> deltaExpirations = isAggregate ? aggWindow : [ViewModel.SelectedExpiration];
+
+            // Исторический ряд дельта-экспозиции: −Σ(Δ·OI) по каждому снимку, по экспирациям
+            // окна/выбора. Отдельный запрос — нужны ВСЕ снимки, а не только последний.
+            string deltaCacheKey = $"TradeDelta_{ViewModel.SelectedCurrencyId}_{string.Join(",", deltaExpirations)}";
+            List<DeribitData> deltaRows = (await _cache.GetOrCreateAsync(deltaCacheKey, async entry =>
+            {
+                entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(15);
+                return await _context.DeribitData
+                    .Where(d => d.CurrencyTypeId == ViewModel.SelectedCurrencyId &&
+                                deltaExpirations.Contains(d.Expiration))
+                    .ToListAsync();
+            }))!;
+
+            List<DeltaPoint> deltaSeries = deltaRows
+                .GroupBy(d => d.CreatedAt)
+                .Select(g => new DeltaPoint
+                {
+                    Time = g.Key,
+                    UnderlyingPrice = g.Max(d => d.UnderlyingPrice),
+                    DeltaExposure = -g.Sum(d => d.Delta * d.OpenInterest)
+                })
+                .OrderBy(p => p.Time)
+                .ToList();
+
+            // Тренд потока DEX (−1…+1) по последним снимкам — передаётся билдеру как сигнал.
+            double dexFlowTrend = SessionAnalysisMath.DexTrend(deltaSeries);
+
+            if (isAggregate)
             {
                 // Агрегированная сводка: окно ближних + квартальной.
                 List<ExpirationAnalysis> analyses = expirationBuilder.Build(rows, aggWindow, asOf);
@@ -128,8 +158,7 @@ public class TradeModel(
                     return;
                 }
 
-                Recommendation = sessionBuilder.BuildAggregate(analyses, currency, asOf);
-                deltaExpirations = aggWindow;
+                Recommendation = sessionBuilder.BuildAggregate(analyses, currency, asOf, dexFlowTrend);
             }
             else
             {
@@ -144,32 +173,14 @@ public class TradeModel(
                     return;
                 }
 
-                Recommendation = sessionBuilder.Build(selected, currency, asOf);
-                deltaExpirations = [ViewModel.SelectedExpiration];
+                Recommendation = sessionBuilder.Build(selected, currency, asOf, dexFlowTrend);
             }
 
-            // Исторический ряд дельта-экспозиции: −Σ(Δ·OI) по каждому снимку, по экспирациям
-            // окна/выбора. Отдельный запрос — нужны ВСЕ снимки, а не только последний.
-            string deltaCacheKey = $"TradeDelta_{ViewModel.SelectedCurrencyId}_{string.Join(",", deltaExpirations)}";
-            List<DeribitData> deltaRows = (await _cache.GetOrCreateAsync(deltaCacheKey, async entry =>
-            {
-                entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(15);
-                return await _context.DeribitData
-                    .Where(d => d.CurrencyTypeId == ViewModel.SelectedCurrencyId &&
-                                deltaExpirations.Contains(d.Expiration))
-                    .ToListAsync();
-            }))!;
-
-            DeltaSeries = deltaRows
-                .GroupBy(d => d.CreatedAt)
-                .Select(g => new DeltaPoint
-                {
-                    Time = g.Key,
-                    UnderlyingPrice = g.Max(d => d.UnderlyingPrice),
-                    DeltaExposure = -g.Sum(d => d.Delta * d.OpenInterest)
-                })
-                .OrderBy(p => p.Time)
-                .ToList();
+            // Дельта-ряд показываем только вместе с рекомендацией: canvas графика
+            // рендерится внутри блока @if (Recommendation != null), и заполненный ряд
+            // без рекомендации привёл бы к JS-ошибке на отсутствующем элементе.
+            if (Recommendation != null)
+                DeltaSeries = deltaSeries;
         }
         catch (Exception e)
         {

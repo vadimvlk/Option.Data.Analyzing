@@ -5,51 +5,102 @@ using Option.Data.Ui.Models;
 namespace Option.Data.Ui.Services;
 
 /// <summary>
-/// Синтезирует торговый план Trade (<see cref="SessionRecommendation"/>): профиль Net GEX,
-/// gamma-flip, режим волатильности, σ-диапазон, ключевые уровни и решающую сделку.
-/// Поддерживает два режима через общее ядро <see cref="Assemble"/>:
-/// <see cref="Build"/> — по одной выбранной экспирации; <see cref="BuildAggregate"/> — по окну
-/// «ближние + квартальная» (профиль собирается по всем экспирациям окна со своими T/σ;
-/// Max Pain/стены/центроид/детали — по сводной цепочке; σ — по квартальной).
+/// Синтезирует торговый план Trade (<see cref="SessionRecommendation"/>).
 ///
-/// Направление и главная сделка строятся по дилерской логике (раздел C спека): положение спота
-/// относительно gamma-flip + знак DEX (DEX&gt;0 → шорт). Flip ведёт, DEX подтверждает/ослабляет.
+/// МЕТОДОЛОГИЯ (дилерская модель GEX, переработка):
+/// <list type="number">
+/// <item><b>Режим — первичен.</b> Знак Net GEX у спота задаёт ПОВЕДЕНИЕ цены, а не направление:
+/// +гамма — дилеры гасят волатильность (диапазон, возврат к магнитам), −гамма — усиливают
+/// (импульс, пробои). Gamma-flip — пивот смены режима, НЕ сигнал лонг/шорт сам по себе.</item>
+/// <item><b>Тип сделки выбирается из режима:</b> +гамма → фейд диапазона между GEX-стенами
+/// к магниту (пин-страйк/flip/Max Pain у экспирации); −гамма → импульс по согласованным
+/// сигналам; нейтральная гамма → вне рынка (кроме сильного согласования сигналов).</item>
+/// <item><b>Направление — взвешенная сумма прозрачных сигналов</b> (<see cref="BiasComponent"/>):
+/// структура/положение (вес 0.45), поток ΔDEX по истории снимков (0.35), скос 25Δ RR (0.20).
+/// Непрозрачный индекс «конвикции» удалён — вместо него таблица сигналов на странице.</item>
+/// <item><b>Размер зон — в σ СЕССИИ</b> (S·σ_ATM·√(1дн)), а не в σ до экспирации: на дальних
+/// горизонтах прежний подход давал стопы/входы в разы шире суточного хода.</item>
+/// <item><b>R:R — фильтр, а не справка:</b> цель подбирается ближайшей, дающей R:R не ниже
+/// порога типа сделки (fade ≥ 1.3, breakout ≥ 1.5, directional ≥ 1.4); если структура
+/// не даёт такой геометрии — план не публикуется (StandAside/отложенный вход у края).</item>
+/// <item><b>Стены — GEX-взвешенные</b> (γ·OI·S²·0.01 по ноге), фолбэк — стены по сырому OI,
+/// когда греки/IV недоступны. σ-границы — лог-нормальные (S·e^{∓kσ√T}).</item>
+/// </list>
 ///
 /// Соглашения согласованы с <see cref="OptionExposureMath"/> и <see cref="SessionAnalysisMath"/>:
-/// σ передаётся долей (mark_iv/100); DEX — долларовый дельта-нотионал; Net GEX — USD на 1% движения.
+/// σ передаётся долей (mark_iv/100); DEX — долларовый дельта-нотионал; Net GEX — USD на 1%.
 /// </summary>
 public class SessionRecommendationBuilder : ISessionRecommendationBuilder
 {
-    /// <summary>
-    /// Порог «≈0» для Net GEX у спота при определении режима: доля от пикового |NetGex| профиля.
-    /// </summary>
+    // ---------- Режим ----------
+
+    /// <summary>Порог «≈0» для Net GEX у спота при определении режима: доля от пикового |NetGex| профиля. КАЛИБРУЕМО.</summary>
     private const double NeutralGexProfileFraction = 0.05;
+
+    // ---------- Сигналы направления (веса нормируются по доступным). КАЛИБРУЕМО. ----------
+
+    /// <summary>Вес структурного сигнала (положение в диапазоне стен / относительно flip).</summary>
+    private const double WeightStructure = 0.45;
+    /// <summary>Вес потока — тренда DEX по истории снимков.</summary>
+    private const double WeightFlow = 0.35;
+    /// <summary>Вес скоса 25Δ Risk Reversal.</summary>
+    private const double WeightSkew = 0.20;
+
+    /// <summary>Скос (в пунктах волатильности), при котором сигнал скоса насыщается (tanh). КАЛИБРУЕМО.</summary>
+    private const double SkewScaleVolPts = 8.0;
+    /// <summary>|тренд DEX| ниже порога считается отсутствием потока (берётся статический фолбэк). КАЛИБРУЕМО.</summary>
+    private const double FlowEpsilon = 0.05;
+    /// <summary>Нормированный |DEX| (доля от спот·ΣOI), при котором статический фолбэк насыщается. КАЛИБРУЕМО.</summary>
+    private const double StaticDexScale = 0.10;
+    /// <summary>Ослабление статического DEX против наблюдаемого потока (уровень ≠ flow). КАЛИБРУЕМО.</summary>
+    private const double StaticDexDamp = 0.5;
+    /// <summary>Дистанция от flip (в σ сессии), на которой структурный сигнал −гаммы насыщается. КАЛИБРУЕМО.</summary>
+    private const double NegGammaFlipDistSigmas = 1.5;
+
+    // ---------- Геометрия сделок (всё — в σ СЕССИИ). КАЛИБРУЕМО. ----------
+
+    /// <summary>«Близко к стене» для активного фейда.</summary>
+    private const double WallProximitySigmas = 0.5;
+    /// <summary>Глубина зоны входа фейда от стены внутрь диапазона.</summary>
+    private const double FadeEntryDepthSigmas = 0.4;
+    /// <summary>Стоп фейда — за стеной.</summary>
+    private const double FadeStopSigmas = 0.6;
+    /// <summary>Полуширина зоны входа импульсной/направленной сделки «от рынка».</summary>
+    private const double MarketEntryHalfSigmas = 0.2;
+    /// <summary>Стоп импульсной сделки без flip-привязки.</summary>
+    private const double BreakoutStopSigmas = 0.8;
+    /// <summary>Стоп направленной сделки (нейтральная гамма) без flip-привязки.</summary>
+    private const double DirectionalStopSigmas = 0.7;
+    /// <summary>Буфер стопа за gamma-flip.</summary>
+    private const double FlipStopBufferSigmas = 0.3;
+    /// <summary>Максимальная дистанция до flip (в σ сессии), при которой стоп ставится за flip.</summary>
+    private const double FlipStopMaxDistSigmas = 1.5;
+
+    /// <summary>Минимальная дистанция до цели (в σ сессии) по типам сделок.</summary>
+    private const double FadeMinTargetSigmas = 0.75;
+    private const double BreakoutMinTargetSigmas = 1.0;
+    private const double DirectionalMinTargetSigmas = 0.8;
+
+    /// <summary>Минимальный R:R по типам сделок — план с худшей геометрией не публикуется.</summary>
+    private const double FadeMinRR = 1.3;
+    private const double BreakoutMinRR = 1.5;
+    private const double DirectionalMinRR = 1.4;
+
+    /// <summary>Минимальный |BiasScore| для импульсной сделки в −гамме. КАЛИБРУЕМО.</summary>
+    private const double MinBreakoutBias = 0.15;
+    /// <summary>Минимальный |BiasScore| для направленной сделки при нейтральной гамме. КАЛИБРУЕМО.</summary>
+    private const double MinNeutralDirectionalBias = 0.35;
+    /// <summary>|BiasScore|, при котором отложенный фейд ставится по дрейфу, а не к ближней стене. КАЛИБРУЕМО.</summary>
+    private const double DriftBiasThreshold = 0.10;
+
+    /// <summary>Max Pain допускается целью только у экспирации (пин-эффект), дней. КАЛИБРУЕМО.</summary>
+    private const double MaxPainTargetMaxDte = 3.0;
 
     /// <summary>Допуск дедупликации уровней по цене, % от спота.</summary>
     private const double LevelDedupPercent = 0.1;
 
-    /// <summary>Полуширина зоны входа в долях σ (вход «от рынка» вокруг спота). КАЛИБРУЕМО.</summary>
-    private const double EntryZoneSigma = 0.15;
-
-    // --- Решающая логика направления (flip + DEX). КАЛИБРУЕМО. ---
-    /// <summary>Нормированный |DEX|, при котором dStr≈tanh(1). КАЛИБРУЕМО.</summary>
-    private const double DexSensitivity = 0.10;
-    /// <summary>База магнитуды направления при споте по верную сторону flip. КАЛИБРУЕМО.</summary>
-    private const double FlipBaseMag = 0.35;
-    /// <summary>Прирост магнитуды за удаление спота от flip (в σ). КАЛИБРУЕМО.</summary>
-    private const double FlipDistGain = 0.45;
-    /// <summary>Усиление, когда DEX подтверждает сторону flip. КАЛИБРУЕМО.</summary>
-    private const double DexConfirmBoost = 0.20;
-    /// <summary>Ослабление, когда DEX против flip (flip всё равно ведёт). КАЛИБРУЕМО.</summary>
-    private const double DexOpposeDamp = 0.25;
-    /// <summary>Пол магнитуды при DEX-против (держит сторону flip, не «Нейтрально»). КАЛИБРУЕМО.</summary>
-    private const double DexOpposeFloor = 0.18;
-    /// <summary>База магнитуды, когда направление ведёт только DEX (нет flip). КАЛИБРУЕМО.</summary>
-    private const double DexOnlyBase = 0.20;
-    /// <summary>Прирост магнитуды DEX-only за силу DEX. КАЛИБРУЕМО.</summary>
-    private const double DexOnlyGain = 0.30;
-
-    public SessionRecommendation Build(ExpirationAnalysis selected, string currency, DateTimeOffset asOf)
+    public SessionRecommendation Build(
+        ExpirationAnalysis selected, string currency, DateTimeOffset asOf, double dexFlowTrend = 0)
     {
         if (selected is null || selected.OptionData.Count == 0)
         {
@@ -62,20 +113,18 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
         double tYears = OptionExposureMath.YearsToExpiry(selected.Expiration, asOf);
         double spot = selected.UnderlyingPrice;
         double atmIv = OptionExposureMath.AtmIvFraction(selected.OptionData, spot);
-        double sigma1 = selected.ExpectedMove1Sigma > 0 && double.IsFinite(selected.ExpectedMove1Sigma)
-            ? selected.ExpectedMove1Sigma
-            : OptionExposureMath.ExpectedMove1Sigma(spot, atmIv, tYears);
 
         List<SessionAnalysisMath.GammaStrike> gammaStrikes = BuildGammaStrikes(selected, asOf);
 
         return Assemble(currency, asOf, selected.Expiration, tYears * 365.0, spot,
-            gammaStrikes, selected.OptionData, sigma1, atmIv, tYears,
-            selected.DollarDeltaExposure, isAggregated: false, aggregatedCount: 1);
+            gammaStrikes, selected.OptionData, atmIv, tYears,
+            selected.DollarDeltaExposure, dexFlowTrend, selected.RiskReversal25Delta,
+            isAggregated: false, aggregatedCount: 1);
     }
 
     public SessionRecommendation BuildAggregate(
         IReadOnlyList<ExpirationAnalysis> window, string currency,
-        DateTimeOffset asOf)
+        DateTimeOffset asOf, double dexFlowTrend = 0)
     {
         if (window is null || window.Count == 0 || window.All(a => a.OptionData.Count == 0))
         {
@@ -88,28 +137,28 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
         double spot = window.Max(a => a.UnderlyingPrice);
 
         // Горизонт = самая дальняя экспирация окна (квартальная): её T и σ.
-        ExpirationAnalysis horizon = window
-            .OrderByDescending(a => OptionExposureMath.YearsToExpiry(a.Expiration, asOf))
-            .First();
+        List<ExpirationAnalysis> byT = window
+            .OrderBy(a => OptionExposureMath.YearsToExpiry(a.Expiration, asOf))
+            .ToList();
+        ExpirationAnalysis horizon = byT[^1];
         double tYears = OptionExposureMath.YearsToExpiry(horizon.Expiration, asOf);
         double atmIv = OptionExposureMath.AtmIvFraction(horizon.OptionData, horizon.UnderlyingPrice);
-        double sigma1 = horizon.ExpectedMove1Sigma > 0 && double.IsFinite(horizon.ExpectedMove1Sigma)
-            ? horizon.ExpectedMove1Sigma
-            : OptionExposureMath.ExpectedMove1Sigma(spot, atmIv, tYears);
 
         // Профиль Net GEX: GammaStrike каждой экспирации окна (свои T/σ), конкатенация.
         var gammaStrikes = new List<SessionAnalysisMath.GammaStrike>();
         foreach (ExpirationAnalysis a in window)
             gammaStrikes.AddRange(BuildGammaStrikes(a, asOf));
 
-        // Сводная цепочка (ΣOI по страйку) — Max Pain/стены/центроид/детали.
+        // Сводная цепочка (ΣOI по страйку) — Max Pain/OI-фолбэк стен/центроид/детали.
         List<OptionData> chain = AggregateChain(window);
 
-        // DEX — сумма по окну.
+        // DEX — сумма по окну; скос — по ближайшей экспирации, где RR рассчитан
+        // (сводная цепочка греков не содержит).
         double dexRaw = window.Sum(a => a.DollarDeltaExposure);
+        double? rr25 = byT.Select(a => a.RiskReversal25Delta).FirstOrDefault(v => v.HasValue);
 
         return Assemble(currency, asOf, horizon.Expiration, tYears * 365.0, spot,
-            gammaStrikes, chain, sigma1, atmIv, tYears, dexRaw,
+            gammaStrikes, chain, atmIv, tYears, dexRaw, dexFlowTrend, rr25,
             isAggregated: true, aggregatedCount: window.Count);
     }
 
@@ -132,17 +181,17 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
     }
 
     /// <summary>
-    /// Общее ядро плана: профиль гаммы (диапазон покрывает 2σ), режим, σ-диапазон, стены,
-    /// Max Pain, центроид, уровни, направление (flip+DEX) и главная сделка. Примитивы уже
-    /// посчитаны вызывающим (Build/BuildAggregate).
+    /// Общее ядро плана: лог-нормальный σ-диапазон + σ сессии, профиль гаммы, режим,
+    /// GEX-стены и пин, уровни, прозрачные сигналы направления и сделка по режиму.
     /// </summary>
     private SessionRecommendation Assemble(
         string currency, DateTimeOffset asOf,
         string expirationLabel, double horizonDte, double spot,
         List<SessionAnalysisMath.GammaStrike> gammaStrikes,
         IReadOnlyList<OptionData> chain,
-        double sigma1, double atmIv, double tYears,
-        double dexRaw, bool isAggregated, int aggregatedCount)
+        double atmIv, double tYears,
+        double dexRaw, double dexFlowTrend, double? rr25,
+        bool isAggregated, int aggregatedCount)
     {
         var rec = new SessionRecommendation
         {
@@ -164,21 +213,33 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
             return rec;
         }
 
+        if (atmIv <= 0 || tYears <= 0)
+        {
+            rec.Notes.Add("Нет валидной ATM IV или время до экспирации ≤ 0 — σ-диапазон и план недоступны.");
+            rec.Primary = StandAsidePrimary("нет валидной IV/времени до экспирации — план не строится.");
+            return rec;
+        }
+
+        // σ-границы до горизонта — лог-нормальные; зоны входа/стопы — в σ СЕССИИ.
+        (double lower1, double upper1) = SessionAnalysisMath.LogNormalBand(spot, atmIv, tYears, 1);
+        (double lower2, double upper2) = SessionAnalysisMath.LogNormalBand(spot, atmIv, tYears, 2);
+        double sessionSigma = SessionAnalysisMath.SessionSigmaUsd(spot, atmIv, tYears);
+
         rec.Range = new SessionRange
         {
             AtmIvPercent = atmIv * 100.0,
-            SessionYears = tYears,
-            DailySigma1 = sigma1,
-            Lower1 = spot - sigma1,
-            Upper1 = spot + sigma1,
-            Lower2 = spot - 2 * sigma1,
-            Upper2 = spot + 2 * sigma1
+            HorizonYears = tYears,
+            Sigma1Usd = OptionExposureMath.ExpectedMove1Sigma(spot, atmIv, tYears),
+            SessionSigmaUsd = sessionSigma,
+            Lower1 = lower1,
+            Upper1 = upper1,
+            Lower2 = lower2,
+            Upper2 = upper2
         };
 
-        // Профиль Net GEX: диапазон покрывает 2σ (минимум ±15%).
-        double half = Math.Max(0.15, 2 * sigma1 / spot * 1.15);
-        double lowFactor = Math.Max(0.30, 1 - half);
-        double highFactor = 1 + half;
+        // Профиль Net GEX: диапазон покрывает 2σ горизонта (минимум ±12%, низ не уже 0.25·спота).
+        double lowFactor = Math.Min(0.88, Math.Max(0.25, lower2 / spot * 0.97));
+        double highFactor = Math.Max(1.12, upper2 / spot * 1.03);
         rec.GammaProfile = SessionAnalysisMath.GammaProfile(gammaStrikes, spot, lowFactor, highFactor);
 
         double? gammaFlip = SessionAnalysisMath.GammaFlip(rec.GammaProfile, spot);
@@ -198,8 +259,16 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
                 ? VolatilityRegime.NegativeGamma
                 : VolatilityRegime.Neutral;
 
-        OptionData? callWall = SessionAnalysisMath.CallWall(chain, spot);
-        OptionData? putWall = SessionAnalysisMath.PutWall(chain, spot);
+        // GEX-взвешенные стены и пин-страйк; фолбэк — стены по сырому OI.
+        List<SessionAnalysisMath.StrikeGexBreakdown> strikeGex =
+            SessionAnalysisMath.StrikeGexAtPrice(gammaStrikes, spot);
+
+        double? callWallStrike = SessionAnalysisMath.GexCallWall(strikeGex, spot)
+                                 ?? SessionAnalysisMath.CallWall(chain, spot)?.Strike;
+        double? putWallStrike = SessionAnalysisMath.GexPutWall(strikeGex, spot)
+                                ?? SessionAnalysisMath.PutWall(chain, spot)?.Strike;
+        double? pinStrike = SessionAnalysisMath.PeakGexStrike(strikeGex, lower2, upper2);
+
         double maxPain = OptionExposureMath.MaxPain(chain);
         double totalOi = chain.Sum(o => o.CallOi + o.PutOi);
         double centroid = totalOi > 0
@@ -207,20 +276,29 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
             : maxPain;
         if (!double.IsFinite(centroid)) centroid = maxPain;
 
-        rec.Levels = BuildLevels(rec, spot, callWall, putWall, maxPain, centroid, gammaFlip);
+        rec.Levels = BuildLevels(rec, spot, chain, callWallStrike, putWallStrike,
+            pinStrike, maxPain, centroid, gammaFlip);
 
-        // Экстремумы профиля (цели; на карту не наносятся).
-        double gammaMinPrice = 0, gammaMaxPrice = 0;
-        if (rec.GammaProfile.Count > 0)
+        // Прозрачные сигналы направления → BiasScore/Bias/BiasComponents.
+        BuildSignals(rec, spot, sessionSigma, gammaFlip, callWallStrike, putWallStrike,
+            dexRaw, dexFlowTrend, rr25, totalOi);
+
+        if (totalOi <= 0)
         {
-            gammaMinPrice = rec.GammaProfile.Aggregate((a, c) => c.NetGex < a.NetGex ? c : a).Price;
-            gammaMaxPrice = rec.GammaProfile.Aggregate((a, c) => c.NetGex > a.NetGex ? c : a).Price;
+            rec.Notes.Add("Нулевой суммарный открытый интерес — сделка не строится.");
+            rec.Primary = StandAsidePrimary("нулевой открытый интерес — позиционирование дилеров не определено.");
+            return rec;
         }
 
-        int conviction = ScoreDirection(rec, spot, sigma1, gammaFlip, dexRaw, totalOi);
-
-        rec.Primary = BuildPrimaryTrade(rec, spot, callWall, putWall, maxPain, centroid,
-            gammaFlip, gammaMinPrice, gammaMaxPrice, sigma1, dexRaw, conviction);
+        rec.Primary = rec.Regime switch
+        {
+            VolatilityRegime.PositiveGamma => BuildFadePlan(rec, spot, sessionSigma,
+                callWallStrike, putWallStrike, pinStrike, maxPain, gammaFlip, horizonDte),
+            VolatilityRegime.NegativeGamma => BuildBreakoutPlan(rec, spot, sessionSigma,
+                callWallStrike, putWallStrike, pinStrike, gammaFlip),
+            _ => BuildNeutralPlan(rec, spot, sessionSigma,
+                callWallStrike, putWallStrike, pinStrike, gammaFlip)
+        };
 
         return rec;
     }
@@ -251,243 +329,474 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
         return result;
     }
 
+    // =====================================================================
+    //  Сигналы направления
+    // =====================================================================
+
     /// <summary>
-    /// Направление = синтез gamma-flip и DEX (дилерская трактовка: DEX&gt;0 → шорт). Flip ведёт:
-    /// при споте по верную сторону flip знак фиксирован, DEX лишь усиливает/ослабляет. Нет flip —
-    /// ведёт DEX. Возвращает конвикцию 0..100; заполняет Bias/BiasScore/BiasComponents (драйверы).
+    /// BiasScore = взвешенная сумма доступных сигналов (веса нормируются):
+    /// структура (положение в диапазоне стен в +гамме / относительно flip в −гамме),
+    /// поток ΔDEX по истории снимков (фолбэк — ослабленный статический DEX), скос 25Δ RR.
+    /// Все компоненты сохраняются в <see cref="SessionRecommendation.BiasComponents"/> для рендера.
     /// </summary>
-    private int ScoreDirection(
-        SessionRecommendation rec, double spot, double sigma1,
-        double? gammaFlip, double dexRaw, double totalOi)
+    private static void BuildSignals(
+        SessionRecommendation rec, double spot, double sessionSigma,
+        double? gammaFlip, double? callWall, double? putWall,
+        double dexRaw, double dexFlowTrend, double? rr25, double totalOi)
     {
-        double safeSigma = sigma1 > 0 && double.IsFinite(sigma1) ? sigma1 : spot * 0.01;
+        double safeSigma = sessionSigma > 0 && double.IsFinite(sessionSigma) ? sessionSigma : spot * 0.01;
+        var components = new List<BiasComponent>();
 
-        int flipVote = gammaFlip is { } flip && double.IsFinite(flip)
-            ? (spot < flip ? -1 : spot > flip ? +1 : 0)
-            : 0;
-        int dexVote = dexRaw > 0 ? -1 : dexRaw < 0 ? +1 : 0;
-
-        double fStr = gammaFlip is { } gf && double.IsFinite(gf)
-            ? Math.Tanh(Math.Abs(spot - gf) / safeSigma)
-            : 0;
-        double dexNorm = totalOi > 0 && double.IsFinite(totalOi)
-            ? SessionAnalysisMath.Clamp(Math.Abs(dexRaw) / (spot * totalOi), 0, 1)
-            : 0;
-        double dStr = Math.Tanh(dexNorm / DexSensitivity);
-
-        double b;
-        if (flipVote != 0)
+        // --- 1. Структура/положение ---
+        if (rec.Regime == VolatilityRegime.PositiveGamma &&
+            callWall is { } cw && putWall is { } pw && cw > pw)
         {
-            double mag = FlipBaseMag + FlipDistGain * fStr;
-            if (dexVote == flipVote) mag = Math.Min(1.0, mag + DexConfirmBoost * dStr);
-            else if (dexVote == -flipVote) mag = Math.Max(DexOpposeFloor, mag - DexOpposeDamp * dStr);
-            b = flipVote * mag;
+            // +гамма: возврат к середине диапазона стен. У CALL-стены — вниз, у PUT-стены — вверх.
+            double mid = (cw + pw) / 2.0;
+            double halfRange = (cw - pw) / 2.0;
+            double x = SessionAnalysisMath.Clamp((spot - mid) / halfRange, -1, 1);
+            double vote = -x;
+            components.Add(new BiasComponent
+            {
+                Name = "Структура (+гамма)",
+                RawValue = x,
+                Normalized = vote,
+                Weight = WeightStructure,
+                Explanation = $"спот {Fmt(spot)} в диапазоне стен {Fmt(pw)}…{Fmt(cw)} " +
+                              $"({(x >= 0 ? "верхняя" : "нижняя")} половина) → возврат к середине " +
+                              $"{(vote >= 0 ? "вверх" : "вниз")}."
+            });
         }
-        else if (dexVote != 0)
+        else if (rec.Regime == VolatilityRegime.NegativeGamma && gammaFlip is { } flip && double.IsFinite(flip))
         {
-            b = dexVote * (DexOnlyBase + DexOnlyGain * dStr);
+            // −гамма: хеджирование усиливает движение ОТ flip; сторона относительно flip — продолжение.
+            double d = (spot - flip) / safeSigma;
+            double vote = Math.Tanh(d / NegGammaFlipDistSigmas);
+            components.Add(new BiasComponent
+            {
+                Name = "Структура (−гамма)",
+                RawValue = spot - flip,
+                Normalized = vote,
+                Weight = WeightStructure,
+                Explanation = $"спот {Fmt(spot)} {(spot < flip ? "ниже" : "выше")} gamma-flip {Fmt(flip)} " +
+                              $"в −гамме → хеджирование усиливает движение {(vote >= 0 ? "вверх" : "вниз")}."
+            });
+        }
+
+        // --- 2. Поток (ΔDEX по снимкам); фолбэк — ослабленный статический DEX ---
+        if (Math.Abs(dexFlowTrend) >= FlowEpsilon)
+        {
+            // Рост дилерского DEX ⇒ хедж-давление вниз (дилер продаёт), падение ⇒ вверх.
+            double vote = -SessionAnalysisMath.Clamp(dexFlowTrend, -1, 1);
+            components.Add(new BiasComponent
+            {
+                Name = "Поток ΔDEX",
+                RawValue = dexFlowTrend,
+                Normalized = vote,
+                Weight = WeightFlow,
+                Explanation = $"дельта-экспозиция по последним снимкам {(dexFlowTrend > 0 ? "растёт" : "падает")} " +
+                              $"→ хедж-поток {(vote >= 0 ? "покупает (вверх)" : "продаёт (вниз)")}."
+            });
+        }
+        else if (dexRaw != 0 && totalOi > 0 && double.IsFinite(totalOi))
+        {
+            double dexNorm = SessionAnalysisMath.Clamp(Math.Abs(dexRaw) / (spot * totalOi), 0, 1);
+            double vote = -(dexRaw > 0 ? 1 : -1) * StaticDexDamp * Math.Tanh(dexNorm / StaticDexScale);
+            components.Add(new BiasComponent
+            {
+                Name = "DEX (статический)",
+                RawValue = dexRaw,
+                Normalized = vote,
+                Weight = WeightFlow,
+                Explanation = $"тренд DEX недоступен; уровень DEX {FmtUsd(dexRaw)} " +
+                              $"({(dexRaw > 0 ? "дилер продаёт" : "дилер покупает")}) — ослабленный сигнал " +
+                              $"{(vote >= 0 ? "вверх" : "вниз")}."
+            });
+        }
+
+        // --- 3. Скос 25Δ RR ---
+        if (rr25 is { } rr && double.IsFinite(rr))
+        {
+            // RR>0 — путы дороже коллов (спрос на защиту) → медвежий фон; RR<0 — наоборот.
+            double vote = -Math.Tanh(rr / SkewScaleVolPts);
+            components.Add(new BiasComponent
+            {
+                Name = "Скос 25Δ RR",
+                RawValue = rr,
+                Normalized = vote,
+                Weight = WeightSkew,
+                Explanation = $"RR {rr.ToString("+0.0;-0.0", CultureInfo.InvariantCulture)} в.п. — " +
+                              $"{(rr > 0 ? "путы дороже (страх)" : rr < 0 ? "коллы дороже (жадность)" : "скос плоский")} " +
+                              $"→ {(vote > 0.02 ? "вверх" : vote < -0.02 ? "вниз" : "нейтрально")}."
+            });
+        }
+
+        double weightSum = components.Sum(c => c.Weight);
+        double score = 0;
+        if (weightSum > 0)
+        {
+            foreach (BiasComponent c in components)
+            {
+                c.Contribution = c.Normalized * c.Weight / weightSum;
+                score += c.Contribution;
+            }
+        }
+
+        rec.BiasScore = SessionAnalysisMath.Clamp(score, -1, 1);
+        rec.BiasComponents = components;
+        rec.Bias = MapBias(rec.BiasScore);
+    }
+
+    // =====================================================================
+    //  Сделки по режиму
+    // =====================================================================
+
+    /// <summary>
+    /// +Гамма: фейд диапазона. У стены — активный вход против стены к магниту; в середине —
+    /// отложенный вход у того края, к которому указывает дрейф сигналов (или ближнего).
+    /// R:R — фильтр (≥ <see cref="FadeMinRR"/>): не проходит у обеих стен → вне рынка.
+    /// </summary>
+    private PrimaryTrade BuildFadePlan(
+        SessionRecommendation rec, double spot, double sessionSigma,
+        double? callWallStrike, double? putWallStrike, double? pinStrike,
+        double maxPain, double? gammaFlip, double horizonDte)
+    {
+        double s = sessionSigma;
+        double resistance = callWallStrike ?? rec.Range.Upper1;
+        double support = putWallStrike ?? rec.Range.Lower1;
+        bool resIsWall = callWallStrike.HasValue;
+        bool supIsWall = putWallStrike.HasValue;
+
+        if (!(resistance > support) || !double.IsFinite(resistance) || !double.IsFinite(support))
+        {
+            return StandAsidePrimary("диапазон стен вырожден — фейд не строится.",
+                "Сетап появится при формировании GEX-стен по обе стороны спота.");
+        }
+
+        double prox = WallProximitySigmas * s;
+
+        PrimaryTrade? plan;
+        if (spot >= resistance - prox)
+        {
+            plan = TryFadeSide(rec, spot, s, TradeSide.Short, resistance, resIsWall,
+                support, pinStrike, maxPain, gammaFlip, horizonDte, conditional: false);
+        }
+        else if (spot <= support + prox)
+        {
+            plan = TryFadeSide(rec, spot, s, TradeSide.Long, support, supIsWall,
+                resistance, pinStrike, maxPain, gammaFlip, horizonDte, conditional: false);
         }
         else
         {
-            b = 0;
+            // Середина диапазона: отложенный вход. Край — по дрейфу сигналов, иначе ближний.
+            TradeSide first;
+            if (rec.BiasScore <= -DriftBiasThreshold) first = TradeSide.Long;        // дрейф вниз → дойдём до PUT-стены
+            else if (rec.BiasScore >= DriftBiasThreshold) first = TradeSide.Short;   // дрейф вверх → до CALL-стены
+            else first = resistance - spot < spot - support ? TradeSide.Short : TradeSide.Long;
+
+            plan = first == TradeSide.Short
+                ? TryFadeSide(rec, spot, s, TradeSide.Short, resistance, resIsWall,
+                    support, pinStrike, maxPain, gammaFlip, horizonDte, conditional: true)
+                : TryFadeSide(rec, spot, s, TradeSide.Long, support, supIsWall,
+                    resistance, pinStrike, maxPain, gammaFlip, horizonDte, conditional: true);
+
+            plan ??= first == TradeSide.Short
+                ? TryFadeSide(rec, spot, s, TradeSide.Long, support, supIsWall,
+                    resistance, pinStrike, maxPain, gammaFlip, horizonDte, conditional: true)
+                : TryFadeSide(rec, spot, s, TradeSide.Short, resistance, resIsWall,
+                    support, pinStrike, maxPain, gammaFlip, horizonDte, conditional: true);
         }
 
-        b = SessionAnalysisMath.Clamp(b, -1, 1);
-
-        var components = new List<BiasComponent>();
-        if (flipVote != 0 && gammaFlip is { } f2)
-        {
-            components.Add(new BiasComponent
-            {
-                Name = "Gamma-flip",
-                RawValue = spot - f2,
-                Normalized = flipVote,
-                Weight = 0.6,
-                Contribution = flipVote * 0.6,
-                Explanation = $"спот {Fmt(spot)} {(flipVote < 0 ? "ниже" : "выше")} gamma-flip {Fmt(f2)} " +
-                              $"→ {(flipVote < 0 ? "шорт" : "лонг")} ({(rec.Regime == VolatilityRegime.PositiveGamma ? "+гамма" : rec.Regime == VolatilityRegime.NegativeGamma ? "−гамма" : "гамма≈0")})."
-            });
-        }
-        if (dexVote != 0)
-        {
-            components.Add(new BiasComponent
-            {
-                Name = "DEX (дилер)",
-                RawValue = dexRaw,
-                Normalized = dexVote,
-                Weight = 0.4,
-                Contribution = dexVote * 0.4,
-                Explanation = $"DEX {FmtUsd(dexRaw)} ({(dexRaw > 0 ? ">0" : "<0")}) → дилер хеджирует " +
-                              $"{(dexRaw > 0 ? "продажей" : "покупкой")} → {(dexVote < 0 ? "шорт" : "лонг")}."
-            });
-        }
-
-        rec.BiasScore = b;
-        rec.BiasComponents = components;
-        rec.Bias = MapBias(b);
-
-        return (int)Math.Round(100 * Math.Abs(b));
+        return plan ?? StandAsidePrimary(
+            $"+гамма, но диапазон {Fmt(support)}…{Fmt(resistance)} слишком узок — R:R фейда ниже {FadeMinRR.ToString("0.0", CultureInfo.InvariantCulture)}.",
+            "Сетап появится при расширении диапазона стен или подходе цены вплотную к стене.");
     }
 
     /// <summary>
-    /// Главная сделка: направление из BiasScore (flip+DEX), вход «от рынка» (спот ∓ 0.15σ),
-    /// цель — ближайший уровень в сторону сделки (стены/Max Pain/центроид/σ + экстремумы Net GEX,
-    /// если в пределах 2σ; на карту не наносятся), стоп — за gamma-flip (если он на стоп-стороне)
-    /// либо спот ∓ буфер. «ВНЕ РЫНКА» — только при отсутствии и flip, и DEX (BiasScore == 0).
+    /// Одна сторона фейда: вход у стены, стоп за стеной, цель — ближайший магнит внутри
+    /// диапазона, проходящий по дистанции и R:R. null — геометрия не проходит фильтр.
     /// </summary>
-    private PrimaryTrade BuildPrimaryTrade(
-        SessionRecommendation rec, double spot,
-        OptionData? callWall, OptionData? putWall,
-        double maxPain, double centroid, double? gammaFlip,
-        double gammaMinPrice, double gammaMaxPrice,
-        double sigma1, double dexRaw, int conviction)
+    private PrimaryTrade? TryFadeSide(
+        SessionRecommendation rec, double spot, double s, TradeSide side,
+        double wall, bool isWall, double oppositeBoundary,
+        double? pinStrike, double maxPain, double? gammaFlip,
+        double horizonDte, bool conditional)
     {
-        double b = rec.BiasScore;
-        double safeSigma = sigma1 > 0 && double.IsFinite(sigma1) ? sigma1 : spot * 0.01;
-        double upper1 = rec.Range.Upper1, lower1 = rec.Range.Lower1;
-        double upper2 = rec.Range.Upper2, lower2 = rec.Range.Lower2;
+        int dir = side == TradeSide.Short ? -1 : +1;
+
+        double entryNear = wall + dir * FadeEntryDepthSigmas * s; // край зоны, ближний к центру (внутрь диапазона)
+        double entryLow = Math.Min(entryNear, wall);
+        double entryHigh = Math.Max(entryNear, wall);
+        if (!conditional)
+        {
+            // Активный вход: спот уже в зоне — расширяем зону до спота, вход «от рынка».
+            entryLow = Math.Min(entryLow, spot);
+            entryHigh = Math.Max(entryHigh, spot);
+        }
+        double entryMid = (entryLow + entryHigh) / 2.0;
+
+        // Стоп за стеной: пробой стены с запасом отменяет фейд.
+        double stop = side == TradeSide.Short
+            ? wall + FadeStopSigmas * s
+            : wall - FadeStopSigmas * s;
+
+        // Кандидаты-цели: пин, flip, Max Pain (только у экспирации), середина и дальняя
+        // граница диапазона — все строго в сторону сделки.
+        var candidates = new List<double>();
+        if (pinStrike is { } pin) candidates.Add(pin);
+        if (gammaFlip is { } flip) candidates.Add(flip);
+        if (horizonDte <= MaxPainTargetMaxDte) candidates.Add(maxPain);
+        candidates.Add((wall + oppositeBoundary) / 2.0);
+        candidates.Add(oppositeBoundary - dir * 0.3 * s); // чуть НЕ доходя до противоположной стены
+
+        (double target, double rr)? pick = PickTarget(candidates, entryMid, stop, dir,
+            FadeMinTargetSigmas * s, FadeMinRR);
+        if (pick is null)
+            return null;
+
+        string wallName = side == TradeSide.Short
+            ? (isWall ? $"CALL-стены {Fmt(wall)}" : $"+1σ {Fmt(wall)}")
+            : (isWall ? $"PUT-стены {Fmt(wall)}" : $"−1σ {Fmt(wall)}");
 
         var trade = new PrimaryTrade
         {
-            Conviction = conviction,
-            ConvictionLabel = ConvictionLabel(conviction),
-            Drivers = TopDrivers(rec.BiasComponents, 2)
+            Action = TradeAction.FadeRange,
+            Side = side,
+            IsConditional = conditional,
+            EntryLow = entryLow,
+            EntryHigh = entryHigh,
+            Target = pick.Value.target,
+            Stop = stop,
+            RiskReward = Math.Round(pick.Value.rr, 2),
+            Drivers = TopDrivers(rec.BiasComponents, 2),
+            Headline = $"ФЕЙД ДИАПАЗОНА — {(side == TradeSide.Short ? "Short" : "Long")} от {wallName} → {Fmt(pick.Value.target)}",
+            Reason = $"+гамма: дилеры гасят волатильность — работа от {wallName} к магниту {Fmt(pick.Value.target)}.",
+            Invalidation = side == TradeSide.Short
+                ? $"закрытие выше {Fmt(stop)} — пробой стены, фейд отменяется"
+                : $"закрытие ниже {Fmt(stop)} — пробой стены, фейд отменяется",
+            PlanB = "Пробой стены со сменой знака Net GEX → переход к импульсной сделке по направлению пробоя."
         };
 
-        if (b == 0)
+        if (conditional)
         {
-            trade.Action = TradeAction.StandAside;
-            trade.Side = TradeSide.None;
-            trade.Headline = "ВНЕ РЫНКА";
-            trade.Reason = "нет ни gamma-flip, ни дельта-сигнала — направление не определено.";
-            trade.Setup = "Сетап появится при формировании gamma-flip или сдвиге дельта-экспозиции.";
-            trade.Invalidation = "—";
-            return trade;
+            double distPct = (wall - spot) / spot * 100.0;
+            trade.Trigger = $"подход к {wallName} ({distPct.ToString("+0.0;-0.0", CultureInfo.CurrentCulture)}% от спота) — вход только из зоны";
         }
 
-        int dir = b < 0 ? -1 : +1;
-        TradeSide side = dir < 0 ? TradeSide.Short : TradeSide.Long;
-        trade.Action = TradeAction.Directional;
-        trade.Side = side;
-
-        double entryHalf = EntryZoneSigma * safeSigma;
-        trade.EntryLow = spot - entryHalf;
-        trade.EntryHigh = spot + entryHalf;
-
-        // Кандидаты-цели в сторону сделки: структурные + экстремум Net GEX (в пределах 2σ).
-        var candidates = new List<double>();
-        if (dir < 0)
-        {
-            if (putWall is not null) candidates.Add(putWall.Strike);
-            candidates.Add(maxPain);
-            candidates.Add(centroid);
-            candidates.Add(lower1);
-            candidates.Add(lower2);
-            if (gammaMinPrice > 0 && Math.Abs(gammaMinPrice - spot) <= 2 * safeSigma)
-                candidates.Add(gammaMinPrice);
-        }
-        else
-        {
-            if (callWall is not null) candidates.Add(callWall.Strike);
-            candidates.Add(maxPain);
-            candidates.Add(centroid);
-            candidates.Add(upper1);
-            candidates.Add(upper2);
-            if (gammaMaxPrice > 0 && Math.Abs(gammaMaxPrice - spot) <= 2 * safeSigma)
-                candidates.Add(gammaMaxPrice);
-        }
-
-        double target = NearestTargetInDirection(candidates, spot, dir, safeSigma);
-        trade.Target = target;
-
-        double stopBuffer = Math.Max(safeSigma, spot * 0.0025);
-        bool flipOnStopSide = gammaFlip is { } gfs && double.IsFinite(gfs) &&
-                              (dir < 0 ? gfs > spot : gfs < spot);
-        if (flipOnStopSide && gammaFlip is { } flipPx)
-        {
-            trade.Stop = dir < 0 ? flipPx + 0.5 * stopBuffer : flipPx - 0.5 * stopBuffer;
-            trade.Invalidation = $"возврат за gamma-flip {Fmt(flipPx)} — смена режима, идея отменяется";
-        }
-        else
-        {
-            trade.Stop = dir < 0 ? spot + stopBuffer : spot - stopBuffer;
-            trade.Invalidation = $"закрытие {(dir < 0 ? "выше" : "ниже")} {Fmt(trade.Stop.Value)}";
-        }
-
-        trade.Headline = $"{(side == TradeSide.Short ? "ШОРТ" : "ЛОНГ")} от {Fmt(spot)} → цель {Fmt(target)}";
-
-        // Ярлык гаммы в тексте — из того же трёхзначного режима, что и бейдж «Режим»
-        // (с нейтральной полосой), чтобы карточка и бейдж не противоречили.
-        string gammaWord = rec.Regime switch
-        {
-            VolatilityRegime.PositiveGamma => "+гамма",
-            VolatilityRegime.NegativeGamma => "−гамма",
-            _ => "гамма≈0"
-        };
-        string flipPart = gammaFlip is { } f3 && double.IsFinite(f3)
-            ? $"спот {Fmt(spot)} {(spot < f3 ? "ниже" : "выше")} gamma-flip {Fmt(f3)} ({gammaWord})"
-            : "gamma-flip не определён";
-
-        // Согласие DEX со стороной flip («подтверждает»/«против»); при отсутствии flip — опускаем.
-        int flipVote = gammaFlip is { } fv && double.IsFinite(fv) ? (spot < fv ? -1 : spot > fv ? +1 : 0) : 0;
-        int dexVote = dexRaw > 0 ? -1 : dexRaw < 0 ? +1 : 0;
-        string dexQual = flipVote != 0 && dexVote != 0
-            ? (dexVote == flipVote ? " подтверждает" : " против")
-            : "";
-        string dexPart = dexRaw > 0 ? $"DEX {FmtUsd(dexRaw)} (дилер продаёт){dexQual}"
-            : dexRaw < 0 ? $"DEX {FmtUsd(dexRaw)} (дилер покупает){dexQual}"
-            : "DEX ≈ 0";
-        trade.Reason = $"{flipPart}; {dexPart} → {(side == TradeSide.Short ? "ШОРТ" : "ЛОНГ")}.";
-
-        trade.PlanB = gammaFlip is { } f4 && double.IsFinite(f4)
-            ? $"Закрепление за gamma-flip {Fmt(f4)} — смена режима, разворот к {(side == TradeSide.Short ? "лонгу" : "шорту")}."
-            : "Смена знака дельта-экспозиции — пересмотр направления.";
-
-        trade.RiskReward = ComputeRiskReward(trade);
         return trade;
     }
 
     /// <summary>
-    /// Ближайший к споту кандидат-цель строго в сторону <paramref name="dir"/> (исключая уровни
-    /// ближе 0.1σ к споту). Фолбэк — измеренный ход спот + dir·max(σ, 0.5%·спот).
+    /// −Гамма: импульсная сделка только при согласованных сигналах (|BiasScore| ≥ порога).
+    /// Вход «от рынка», стоп за gamma-flip (смена режима — естественная инвалидация),
+    /// цель — ближайший структурный уровень с R:R ≥ <see cref="BreakoutMinRR"/>.
     /// </summary>
-    private static double NearestTargetInDirection(IReadOnlyList<double> candidates, double spot, int dir, double safeSigma)
+    private PrimaryTrade BuildBreakoutPlan(
+        SessionRecommendation rec, double spot, double sessionSigma,
+        double? callWallStrike, double? putWallStrike, double? pinStrike, double? gammaFlip)
     {
-        double eps = Math.Max(spot * 0.0005, 1e-6);
-        double minDist = 0.1 * safeSigma;
+        double s = sessionSigma;
+
+        if (Math.Abs(rec.BiasScore) < MinBreakoutBias)
+        {
+            return StandAsidePrimary(
+                "−гамма: волатильность расширена, но сигналы направления не согласованы — двусторонний риск без преимущества.",
+                "Вход — при согласовании потока ΔDEX и положения относительно gamma-flip, либо по факту пробоя GEX-стены.");
+        }
+
+        int dir = rec.BiasScore < 0 ? -1 : +1;
+        TradeSide side = dir < 0 ? TradeSide.Short : TradeSide.Long;
+
+        double entryLow = spot - MarketEntryHalfSigmas * s;
+        double entryHigh = spot + MarketEntryHalfSigmas * s;
+        double entryMid = spot;
+
+        double stop;
+        string invalidation;
+        bool flipOnStopSide = gammaFlip is { } gf && double.IsFinite(gf) &&
+                              (dir < 0 ? gf > spot : gf < spot) &&
+                              Math.Abs(gf - spot) <= FlipStopMaxDistSigmas * s;
+        if (flipOnStopSide && gammaFlip is { } flipPx)
+        {
+            stop = dir < 0 ? flipPx + FlipStopBufferSigmas * s : flipPx - FlipStopBufferSigmas * s;
+            invalidation = $"возврат за gamma-flip {Fmt(flipPx)} — смена режима на +гамму, импульс отменяется";
+        }
+        else
+        {
+            stop = dir < 0 ? spot + BreakoutStopSigmas * s : spot - BreakoutStopSigmas * s;
+            invalidation = $"закрытие {(dir < 0 ? "выше" : "ниже")} {Fmt(stop)}";
+        }
+
+        // Кандидаты-цели по направлению: стена направления (в −гамме её пробой ускоряет ход),
+        // пин, σ-границы горизонта.
+        var candidates = new List<double>();
+        if (dir < 0)
+        {
+            if (putWallStrike is { } pwS) candidates.Add(pwS);
+            candidates.Add(rec.Range.Lower1);
+            candidates.Add(rec.Range.Lower2);
+        }
+        else
+        {
+            if (callWallStrike is { } cwS) candidates.Add(cwS);
+            candidates.Add(rec.Range.Upper1);
+            candidates.Add(rec.Range.Upper2);
+        }
+        if (pinStrike is { } pin) candidates.Add(pin);
+
+        (double target, double rr)? pick = PickTarget(candidates, entryMid, stop, dir,
+            BreakoutMinTargetSigmas * s, BreakoutMinRR);
+        if (pick is null)
+        {
+            return StandAsidePrimary(
+                $"−гамма с направлением {(dir < 0 ? "вниз" : "вверх")}, но нет цели с R:R ≥ {BreakoutMinRR.ToString("0.0", CultureInfo.InvariantCulture)}.",
+                "Сетап появится при отходе цены от ближайших структурных уровней.");
+        }
+
+        return new PrimaryTrade
+        {
+            Action = TradeAction.Breakout,
+            Side = side,
+            EntryLow = entryLow,
+            EntryHigh = entryHigh,
+            Target = pick.Value.target,
+            Stop = stop,
+            RiskReward = Math.Round(pick.Value.rr, 2),
+            Drivers = TopDrivers(rec.BiasComponents, 2),
+            Headline = $"ИМПУЛЬС (−гамма) — {(side == TradeSide.Short ? "ШОРТ" : "ЛОНГ")} от {Fmt(spot)} → {Fmt(pick.Value.target)}",
+            Reason = "−гамма: хеджирование дилеров усиливает движение; направление — по согласованным сигналам (см. таблицу).",
+            Invalidation = invalidation,
+            PlanB = gammaFlip is { } f && double.IsFinite(f)
+                ? $"Возврат выше/ниже gamma-flip {Fmt(f)} в +гамму → переход к фейду диапазона."
+                : "Смена знака Net GEX у спота → переход к фейду диапазона."
+        };
+    }
+
+    /// <summary>
+    /// Нейтральная гамма: по умолчанию вне рынка; направленная сделка допускается только
+    /// при сильном согласовании сигналов (|BiasScore| ≥ <see cref="MinNeutralDirectionalBias"/>).
+    /// </summary>
+    private PrimaryTrade BuildNeutralPlan(
+        SessionRecommendation rec, double spot, double sessionSigma,
+        double? callWallStrike, double? putWallStrike, double? pinStrike, double? gammaFlip)
+    {
+        double s = sessionSigma;
+
+        if (Math.Abs(rec.BiasScore) < MinNeutralDirectionalBias)
+        {
+            return StandAsidePrimary(
+                "Net GEX у спота ≈ 0 — режим не определён, статистического преимущества нет.",
+                "Сетап появится при смещении Net GEX от нуля (режим) либо подходе цены к GEX-стене.");
+        }
+
+        int dir = rec.BiasScore < 0 ? -1 : +1;
+        TradeSide side = dir < 0 ? TradeSide.Short : TradeSide.Long;
+
+        double entryLow = spot - MarketEntryHalfSigmas * s;
+        double entryHigh = spot + MarketEntryHalfSigmas * s;
+
+        double stop;
+        string invalidation;
+        bool flipOnStopSide = gammaFlip is { } gf && double.IsFinite(gf) &&
+                              (dir < 0 ? gf > spot : gf < spot) &&
+                              Math.Abs(gf - spot) <= FlipStopMaxDistSigmas * s;
+        if (flipOnStopSide && gammaFlip is { } flipPx)
+        {
+            stop = dir < 0 ? flipPx + FlipStopBufferSigmas * s : flipPx - FlipStopBufferSigmas * s;
+            invalidation = $"возврат за gamma-flip {Fmt(flipPx)} — идея отменяется";
+        }
+        else
+        {
+            stop = dir < 0 ? spot + DirectionalStopSigmas * s : spot - DirectionalStopSigmas * s;
+            invalidation = $"закрытие {(dir < 0 ? "выше" : "ниже")} {Fmt(stop)}";
+        }
+
+        var candidates = new List<double>();
+        if (dir < 0)
+        {
+            if (putWallStrike is { } pwS) candidates.Add(pwS);
+            candidates.Add(rec.Range.Lower1);
+        }
+        else
+        {
+            if (callWallStrike is { } cwS) candidates.Add(cwS);
+            candidates.Add(rec.Range.Upper1);
+        }
+        if (pinStrike is { } pin) candidates.Add(pin);
+
+        (double target, double rr)? pick = PickTarget(candidates, spot, stop, dir,
+            DirectionalMinTargetSigmas * s, DirectionalMinRR);
+        if (pick is null)
+        {
+            return StandAsidePrimary(
+                "Гамма ≈ 0, сигналы согласованы, но нет цели с приемлемым R:R.",
+                "Сетап появится при отходе цены от ближайших структурных уровней.");
+        }
+
+        return new PrimaryTrade
+        {
+            Action = TradeAction.Directional,
+            Side = side,
+            EntryLow = entryLow,
+            EntryHigh = entryHigh,
+            Target = pick.Value.target,
+            Stop = stop,
+            RiskReward = Math.Round(pick.Value.rr, 2),
+            Drivers = TopDrivers(rec.BiasComponents, 2),
+            Headline = $"{(side == TradeSide.Short ? "ШОРТ" : "ЛОНГ")} от {Fmt(spot)} → {Fmt(pick.Value.target)} (гамма ≈ 0)",
+            Reason = "Гамма у спота ≈ 0: режим не задан, направление — по сильному согласованию сигналов (см. таблицу).",
+            Invalidation = invalidation,
+            PlanB = "Смещение Net GEX от нуля задаст режим: +гамма → фейд диапазона, −гамма → импульс."
+        };
+    }
+
+    /// <summary>
+    /// Ближайшая по дистанции цель в сторону <paramref name="dir"/>, проходящая фильтры:
+    /// дистанция ≥ <paramref name="minDist"/> И R:R = дистанция/риск ≥ <paramref name="minRR"/>.
+    /// Так как R:R растёт с дистанцией, достаточно ближайшего кандидата с
+    /// дистанцией ≥ max(minDist, minRR·риск). null — кандидатов нет (план не публикуется).
+    /// </summary>
+    private static (double Target, double Rr)? PickTarget(
+        IReadOnlyList<double> candidates, double entryMid, double stop, int dir,
+        double minDist, double minRR)
+    {
+        double risk = Math.Abs(entryMid - stop);
+        if (risk <= 0 || !double.IsFinite(risk))
+            return null;
+
+        double requiredDist = Math.Max(minDist, minRR * risk);
         double best = 0, bestDist = double.MaxValue;
 
         foreach (double p in candidates)
         {
-            if (p <= 0 || !double.IsFinite(p)) continue;
-            bool onSide = dir > 0 ? p > spot + eps : p < spot - eps;
-            if (!onSide) continue;
-            double d = Math.Abs(p - spot);
-            if (d < minDist) continue;
-            if (d < bestDist) { bestDist = d; best = p; }
+            if (p <= 0 || !double.IsFinite(p))
+                continue;
+            double dist = dir > 0 ? p - entryMid : entryMid - p;
+            if (dist < requiredDist)
+                continue;
+            if (dist < bestDist)
+            {
+                bestDist = dist;
+                best = p;
+            }
         }
 
         if (best <= 0 || !double.IsFinite(best))
-            best = spot + dir * Math.Max(safeSigma > 0 ? safeSigma : 0, spot * 0.005);
+            return null;
 
-        return best;
+        return (best, bestDist / risk);
     }
 
-    /// <summary>Заглушка «ВНЕ РЫНКА» для вырожденных случаев (нет данных/спота) — чтобы вёрстка
-    /// отрисовала честную ветку, а не дефолтную направленную сделку (FadeRange/Long).</summary>
-    private static PrimaryTrade StandAsidePrimary(string reason) => new()
+    /// <summary>Заглушка «ВНЕ РЫНКА» с причиной и условием появления сетапа.</summary>
+    private static PrimaryTrade StandAsidePrimary(string reason, string? setup = null) => new()
     {
         Action = TradeAction.StandAside,
         Side = TradeSide.None,
         Headline = "ВНЕ РЫНКА",
         Reason = reason,
-        Setup = "План появится при корректном снимке с открытым интересом и ценой базового актива.",
+        Setup = setup ?? "План появится при корректном снимке с открытым интересом и ценой базового актива.",
         Invalidation = "—"
     };
-
-    /// <summary>Ярлык конвикции: ≥60 Высокая, 35..59 Средняя, иначе Низкая.</summary>
-    private static string ConvictionLabel(int conviction)
-        => conviction >= 60 ? "Высокая" : conviction >= 35 ? "Средняя" : "Низкая";
 
     /// <summary>Топ-N драйверов по модулю вклада в bias (короткой строкой).</summary>
     private static List<string> TopDrivers(IReadOnlyList<BiasComponent> components, int n)
@@ -498,27 +807,10 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
             .Select(c => $"{c.Name}: {(c.Normalized >= 0 ? "вверх" : "вниз")} (вклад {c.Contribution:+0.00;-0.00})")
             .ToList();
 
-    /// <summary>R:R = |цель−середина входа| / |середина входа−стоп|; null при неполных данных.</summary>
-    private static double? ComputeRiskReward(PrimaryTrade t)
-    {
-        if (t.EntryLow is not { } lo || t.EntryHigh is not { } hi
-            || t.Target is not { } tgt || t.Stop is not { } stop)
-            return null;
-
-        double entry = (lo + hi) / 2;
-        double reward = Math.Abs(tgt - entry);
-        double risk = Math.Abs(entry - stop);
-        if (risk <= 0 || !double.IsFinite(reward) || !double.IsFinite(risk))
-            return null;
-
-        double rr = reward / risk;
-        return double.IsFinite(rr) ? Math.Round(rr, 2) : null;
-    }
-
     private List<PriceLevel> BuildLevels(
-        SessionRecommendation rec, double spot,
-        OptionData? callWall, OptionData? putWall,
-        double maxPain, double centroidNear, double? gammaFlip)
+        SessionRecommendation rec, double spot, IReadOnlyList<OptionData> chain,
+        double? callWallStrike, double? putWallStrike, double? pinStrike,
+        double maxPain, double centroid, double? gammaFlip)
     {
         var levels = new List<PriceLevel>();
 
@@ -537,16 +829,27 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
             });
         }
 
+        double? OiAt(double strike, bool call)
+        {
+            OptionData? row = chain.FirstOrDefault(o => o.Strike == strike);
+            if (row is null) return null;
+            double oi = call ? row.CallOi : row.PutOi;
+            return oi > 0 ? oi : null;
+        }
+
         Add(LevelKind.Spot, "Спот", spot, "Спот");
 
-        if (callWall is not null)
-            Add(LevelKind.CallWall, $"CALL-стена {Fmt(callWall.Strike)}", callWall.Strike, "Сопротивление", callWall.CallOi);
+        if (callWallStrike is { } cw)
+            Add(LevelKind.CallWall, $"CALL-стена {Fmt(cw)}", cw, "Сопротивление", OiAt(cw, call: true));
 
-        if (putWall is not null)
-            Add(LevelKind.PutWall, $"PUT-стена {Fmt(putWall.Strike)}", putWall.Strike, "Поддержка", putWall.PutOi);
+        if (putWallStrike is { } pw)
+            Add(LevelKind.PutWall, $"PUT-стена {Fmt(pw)}", pw, "Поддержка", OiAt(pw, call: false));
+
+        if (pinStrike is { } pin)
+            Add(LevelKind.GammaPeak, $"Пик гаммы {Fmt(pin)}", pin, "Магнит/пин");
 
         Add(LevelKind.MaxPain, $"Max Pain {Fmt(maxPain)}", maxPain, "Магнит");
-        Add(LevelKind.GravityEquilibrium, $"Центр тяжести {Fmt(centroidNear)}", centroidNear, "Магнит");
+        Add(LevelKind.GravityEquilibrium, $"Центр тяжести {Fmt(centroid)}", centroid, "Справочно");
 
         if (gammaFlip is { } flip)
             Add(LevelKind.GammaFlip, $"Gamma-flip {Fmt(flip)}", flip, "Пивот");
@@ -585,10 +888,11 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
         LevelKind.Spot => 0,
         LevelKind.CallWall => 1,
         LevelKind.PutWall => 1,
-        LevelKind.MaxPain => 2,
-        LevelKind.GravityEquilibrium => 3,
+        LevelKind.GammaPeak => 2,
+        LevelKind.MaxPain => 3,
         LevelKind.GammaFlip => 4,
-        _ => 5 // σ-границы
+        LevelKind.GravityEquilibrium => 5,
+        _ => 6 // σ-границы
     };
 
     private static DirectionBias MapBias(double b) => b switch

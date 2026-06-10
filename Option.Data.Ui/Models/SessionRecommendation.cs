@@ -6,7 +6,13 @@ public enum DirectionBias { StrongDown, ModerateDown, Neutral, ModerateUp, Stron
 public enum VolatilityRegime { PositiveGamma, NegativeGamma, Neutral }
 public enum LevelKind { Spot, CallWall, PutWall, MaxPain, GravityEquilibrium, GammaFlip, GammaPeak, Sigma1Up, Sigma1Down, Sigma2Up, Sigma2Down }
 
-/// <summary>Тип действия главной сделки сессии.</summary>
+/// <summary>
+/// Тип главной сделки сессии. Выбирается ИЗ РЕЖИМА гаммы (а не из направления):
+/// +гамма → <see cref="FadeRange"/> (возврат к середине от стен),
+/// −гамма → <see cref="Breakout"/> (движение по импульсу),
+/// нейтральная гамма с согласованными сигналами → <see cref="Directional"/>,
+/// иначе → <see cref="StandAside"/>.
+/// </summary>
 public enum TradeAction { FadeRange, Breakout, Directional, StandAside }
 
 /// <summary>Сторона главной сделки.</summary>
@@ -22,7 +28,10 @@ public class SessionRecommendation
     public DateTimeOffset AsOf { get; set; }
 
     public DirectionBias Bias { get; set; }
-    public double BiasScore { get; set; }              // -1..+1
+
+    /// <summary>Сводный балл направления −1…+1 = взвешенная сумма прозрачных сигналов <see cref="BiasComponents"/>.</summary>
+    public double BiasScore { get; set; }
+
     public VolatilityRegime Regime { get; set; }
     public double NetGexAtSpot { get; set; }           // USD/1%
     public double? GammaFlip { get; set; }
@@ -35,11 +44,14 @@ public class SessionRecommendation
 
     public SessionRange Range { get; set; } = new();
 
-    /// <summary>Главная сделка сессии — единственная конкретная рекомендация (раздел B спека).</summary>
+    /// <summary>Главная сделка сессии — единственная конкретная рекомендация.</summary>
     public PrimaryTrade Primary { get; set; } = new();
 
     public List<PriceLevel> Levels { get; set; } = new();      // отсортированы по Price (убыв.)
+
+    /// <summary>Прозрачная таблица сигналов направления (рендерится на странице вместо «конвикции»).</summary>
     public List<BiasComponent> BiasComponents { get; set; } = new();
+
     public List<GammaProfilePoint> GammaProfile { get; set; } = new();
     public List<string> Notes { get; set; } = new();           // предупреждения/краевые случаи (внутреннее, не рендерится)
     public List<OptionData> FrontChain { get; set; } = new();  // для сворачиваемого блока HtmlBuilder
@@ -48,8 +60,22 @@ public class SessionRecommendation
 public class SessionRange
 {
     public double AtmIvPercent { get; set; }           // σ_ATM выбранной экспирации, % годовых
-    public double SessionYears { get; set; }           // T — доля года до выбранной экспирации
-    public double DailySigma1 { get; set; }            // абсолют USD, 1σ до выбранной экспирации (S·σ·√T)
+
+    /// <summary>T — доля года до выбранного горизонта (экспирации/квартальной).</summary>
+    public double HorizonYears { get; set; }
+
+    /// <summary>1σ ожидаемого движения до горизонта, USD: S·σ_ATM·√T (для подписи диапазона).</summary>
+    public double Sigma1Usd { get; set; }
+
+    /// <summary>
+    /// σ ОДНОЙ торговой сессии (1 день, но не дальше экспирации), USD: S·σ_ATM·√(min(T, 1/365)).
+    /// Используется для зон входа, стопов и буферов — в отличие от σ до горизонта,
+    /// которая на дальних экспирациях на порядок шире сессии.
+    /// </summary>
+    public double SessionSigmaUsd { get; set; }
+
+    // Лог-нормальные границы до горизонта: S·e^{∓kσ√T}. Никогда не отрицательны
+    // (в отличие от прежних арифметических S∓kσ, уходивших ниже нуля при больших σ√T).
     public double Lower1 { get; set; }
     public double Upper1 { get; set; }
     public double Lower2 { get; set; }
@@ -67,28 +93,41 @@ public class PriceLevel
 }
 
 /// <summary>
-/// Главная сделка сессии: одна конкретная рекомендация вместо трёх параллельных сценариев.
-/// При <see cref="Action"/> = StandAside поля входа/цели/стопа пусты, заполнено <see cref="Setup"/>.
+/// Главная сделка сессии. Может быть АКТИВНОЙ (вход от текущей цены) или ОТЛОЖЕННОЙ
+/// (<see cref="IsConditional"/> = true): зона входа лежит у края диапазона, активация —
+/// по условию <see cref="Trigger"/>. При <see cref="Action"/> = StandAside поля входа/цели/стопа
+/// пусты, заполнено <see cref="Setup"/>.
+/// R:R считается всегда и является ФИЛЬТРОМ: план с R:R ниже порога своего типа
+/// (fade ≥ 1.3, breakout ≥ 1.5, directional ≥ 1.4) не публикуется — вместо него StandAside.
 /// </summary>
 public class PrimaryTrade
 {
     public TradeAction Action { get; set; }
     public TradeSide Side { get; set; }
-    public string Headline { get; set; } = "";        // "ФЕЙД ДИАПАЗОНА — Short от верхнего края к магниту"
+    public string Headline { get; set; } = "";        // "ФЕЙД ДИАПАЗОНА — Long от PUT-стены 2400 → 2520"
+
+    /// <summary>true — отложенный вход: ждать условия <see cref="Trigger"/> (цена ещё не в зоне).</summary>
+    public bool IsConditional { get; set; }
+
+    /// <summary>Условие активации отложенного входа (пусто для активного входа).</summary>
+    public string Trigger { get; set; } = "";
+
     public double? EntryLow { get; set; }
     public double? EntryHigh { get; set; }
     public double? Target { get; set; }
     public double? Stop { get; set; }
     public string Invalidation { get; set; } = "";     // условие отмены идеи
     public double? RiskReward { get; set; }
-    public int Conviction { get; set; }                // 0..100
-    public string ConvictionLabel { get; set; } = "";  // Высокая/Средняя/Низкая
     public string Reason { get; set; } = "";           // одна строка «почему»
     public List<string> Drivers { get; set; } = new(); // топ 1-2 драйвера
     public string PlanB { get; set; } = "";            // одна строка плана-Б
     public string Setup { get; set; } = "";            // для StandAside: условие появления сетапа
 }
 
+/// <summary>
+/// Один сигнал направления. Все сигналы и веса показываются пользователю как есть —
+/// это замена непрозрачного индекса «конвикции».
+/// </summary>
 public class BiasComponent
 {
     public string Name { get; set; } = "";
