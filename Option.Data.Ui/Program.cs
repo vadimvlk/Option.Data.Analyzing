@@ -33,6 +33,7 @@ builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IOptionsAnalysisHtmlBuilder, OptionsAnalysisHtmlBuilder>();
 builder.Services.AddSingleton<IExpirationAnalysisBuilder, ExpirationAnalysisBuilder>();
 builder.Services.AddSingleton<ISessionRecommendationBuilder, SessionRecommendationBuilder>();
+builder.Services.AddSingleton<ISellRecommendationBuilder, SellRecommendationBuilder>();
 
 // Источники доски опционов (Snapshot) + резолвер по выбранной бирже.
 builder.Services.AddScoped<IOptionBoardSource, DeribitOptionBoardSource>();

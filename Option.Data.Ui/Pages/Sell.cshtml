@@ -1,0 +1,256 @@
+@page
+@using System.Globalization
+@using Option.Data.Ui.Models
+@using Option.Data.Shared.Poco
+@model SellModel
+@{
+    ViewData["Title"] = "Premium Sell";
+
+    static string RegimeText(VolatilityRegime r) => r switch
+    {
+        VolatilityRegime.PositiveGamma => "+гамма: вола подавлена — режим продавца",
+        VolatilityRegime.NegativeGamma => "−гамма: разгон движений — продавцу опасно",
+        _ => "Нейтральный режим"
+    };
+
+    static string RegimeBadge(VolatilityRegime r) => r switch
+    {
+        VolatilityRegime.PositiveGamma => "bg-success",
+        VolatilityRegime.NegativeGamma => "bg-danger",
+        _ => "bg-secondary"
+    };
+
+    static string ProfileTitle(SellProfile p) => p == SellProfile.Adaptive
+        ? "АДАПТИВНЫЙ (от режима GEX)"
+        : "АГРЕССИВНЫЙ";
+
+    static string Pct(double v) => v.ToString("0.0", CultureInfo.CurrentCulture);
+    static string N0(double v) => v.ToString("N0", CultureInfo.CurrentCulture);
+    static string N2(double v) => v.ToString("N2", CultureInfo.CurrentCulture);
+    static string Coin(double v) => v.ToString("0.0000", CultureInfo.CurrentCulture);
+}
+
+<div class="container">
+    <h2>Premium Sell — непокрытая продажа опционов</h2>
+
+    <form method="post" class="mb-3">
+        <div class="grid">
+            <div>
+                <label for="currency">Валюта</label>
+                <select id="currency" name="ViewModel.SelectedCurrencyId" required>
+                    @foreach (CurrencyType currency in Model.ViewModel.Currencies)
+                    {
+                        <option value="@currency.Id" selected="@(currency.Id == Model.ViewModel.SelectedCurrencyId)">@currency.Name</option>
+                    }
+                </select>
+            </div>
+            <div>
+                <label for="expiration">Экспирация</label>
+                <select id="expiration" name="ViewModel.SelectedExpiration" required>
+                    @foreach (string exp in Model.ViewModel.Expirations)
+                    {
+                        <option value="@exp" selected="@(exp == Model.ViewModel.SelectedExpiration)">@exp</option>
+                    }
+                </select>
+            </div>
+        </div>
+        <button type="submit" class="contrast">Load Data</button>
+    </form>
+
+    @if (!string.IsNullOrEmpty(Model.ExpirationShiftNote))
+    {
+        <p><mark>@Model.ExpirationShiftNote</mark></p>
+    }
+
+    @if (Model.Recommendation != null)
+    {
+        SellRecommendation rec = Model.Recommendation;
+
+        <!-- ===== Контекст рынка ===== -->
+        <article class="mb-3">
+            <header class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                <strong class="fs-5">@rec.Currency · @rec.Expiration · форвард @N2(rec.Forward) · DTE @rec.DteDays.ToString("0.0") дн</strong>
+                <span class="d-flex flex-wrap gap-2">
+                    <span class="badge @RegimeBadge(rec.Regime)">@RegimeText(rec.Regime)</span>
+                    <span class="badge bg-secondary">bias @rec.BiasScore.ToString("+0.00;-0.00;0.00")</span>
+                </span>
+            </header>
+            <p class="mb-1">
+                ATM IV <strong>@Pct(rec.AtmIvPct)%</strong> ·
+                RV (EWMA, 30 дн) <strong>@(rec.RvAnnualPct > 0 ? Pct(rec.RvAnnualPct) + "%" : "—")</strong> ·
+                прогноз σ_phys <strong>@Pct(rec.SigmaPhysPct)%</strong> ·
+                σ сессии ±@N0(rec.SessionSigmaUsd) $ ·
+                Net GEX у спота <span class="@(rec.NetGexAtSpot >= 0 ? "text-success" : "text-danger")">@N0(rec.NetGexAtSpot)</span>
+            </p>
+            <small class="text-muted">
+                Диапазон ±1σ_phys: @N2(rec.Band1.Lower) … @N2(rec.Band1.Upper) ·
+                ±2σ_phys: @N2(rec.Band2.Lower) … @N2(rec.Band2.Upper)
+            </small>
+            @foreach (string note in rec.Notes)
+            {
+                <p class="mb-0"><small class="text-muted">@note</small></p>
+            }
+        </article>
+
+        <!-- ===== Карточки профилей ===== -->
+        @foreach (SellCard card in new[] { rec.Adaptive, rec.Aggressive })
+        {
+            string accent = card.IsStandAside ? "secondary" : card.Profile == SellProfile.Adaptive ? "success" : "warning";
+            <article class="mb-4 border border-@accent" style="border-width:2px !important;">
+                <header class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                    <strong>@ProfileTitle(card.Profile)</strong>
+                    @if (!card.IsStandAside)
+                    {
+                        <span class="badge bg-@accent fs-6 text-dark">
+                            SELL @(card.Leg == SellLeg.Strangle
+                                ? $"STRANGLE {card.Primary!.Instrument} + {card.SecondLeg!.Instrument}"
+                                : card.Primary!.Instrument)
+                        </span>
+                    }
+                </header>
+
+                @if (card.IsStandAside)
+                {
+                    <p class="mb-1"><strong>Вне рынка:</strong> @card.StandAsideReason.</p>
+                    <p class="mb-0 text-muted"><small><strong>Условие возврата:</strong> @card.ReturnCondition.</small></p>
+                }
+                else
+                {
+                    SellCandidate p = card.Primary!;
+                    @foreach (string w in card.Warnings)
+                    {
+                        <p class="mb-1"><span class="badge bg-danger">!</span> <small class="text-danger">@w</small></p>
+                    }
+                    <div class="grid">
+                        <div>
+                            <p class="mb-1"><strong>Премия (бид):</strong> @Coin(card.TotalPremiumCoin) @rec.Currency = <strong>@N0(card.TotalPremiumUsd) $</strong></p>
+                            <p class="mb-1"><strong>Маржа Deribit:</strong> @Coin(card.TotalMarginCoin) @rec.Currency = @N0(card.TotalMarginUsd) $</p>
+                            <p class="mb-1"><strong>Доходность на маржу:</strong> @Pct(card.YieldOnMarginPct)% за @rec.DteDays.ToString("0.0") дн (= @Pct(card.YieldAnnualizedPct)% годовых)</p>
+                            <p class="mb-1"><strong>Тета/день:</strong> ≈ @N0(-(p.ThetaPerDayUsd + (card.SecondLeg?.ThetaPerDayUsd ?? 0))) $ в пользу продавца</p>
+                        </div>
+                        <div>
+                            <p class="mb-1"><strong>Эдж (EV):</strong>
+                                <span class="@(card.TotalEvUsd > 0 ? "text-success" : "text-danger")">@N0(card.TotalEvUsd) $</span>
+                                <small class="text-muted">— IV @Pct(p.MarketIvPct)% против прогноза @Pct(rec.SigmaPhysPct)%</small>
+                            </p>
+                            <p class="mb-1"><strong>P(остаться OTM):</strong> <span class="fs-5 text-success">@Pct((1 - (card.SecondLeg is null ? p.ProbItm : Math.Min(1, p.ProbItm + card.SecondLeg.ProbItm))) * 100)%</span></p>
+                            <p class="mb-1"><strong>P(касания страйка):</strong> <span class="fs-5 @(card.CombinedProbTouch < 0.3 ? "text-success" : "text-warning")">@Pct(card.CombinedProbTouch * 100)%</span>
+                                <small class="text-muted">— частота сценариев плана Б</small>
+                            </p>
+                            <p class="mb-1"><strong>Дельта:</strong> @p.Delta.ToString("+0.00;-0.00")@(card.SecondLeg is { } sl2 ? $" / {sl2.Delta.ToString("+0.00;-0.00")}" : "")</p>
+                        </div>
+                    </div>
+
+                    <details>
+                        <summary><strong>План Б</strong> — @card.PlanB.Count триггера(ов) с уровнями</summary>
+                        <table class="table table-sm table-bordered mt-2 mb-1">
+                            <thead><tr><th>Триггер</th><th class="text-end">Уровень</th><th>Условие</th><th>Действие</th></tr></thead>
+                            <tbody>
+                            @foreach (PlanBTrigger tr in card.PlanB)
+                            {
+                                <tr>
+                                    <td>@tr.Name</td>
+                                    <td class="text-end">@(tr.Level is { } lv ? N2(lv) : "—")</td>
+                                    <td><small>@tr.Condition</small></td>
+                                    <td><small>@tr.Action</small></td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </details>
+
+                    <details>
+                        <summary><strong>Стресс-тест</strong> — PnL при цене экспирации (σ_phys-сценарии)</summary>
+                        <table class="table table-sm table-bordered mt-2 mb-1">
+                            <thead><tr>@foreach (StressPoint sp in card.Stress) { <th class="text-end">@sp.Label</th> }</tr></thead>
+                            <tbody>
+                            <tr>@foreach (StressPoint sp in card.Stress) { <td class="text-end"><small>@N0(sp.Price)</small></td> }</tr>
+                            <tr>@foreach (StressPoint sp in card.Stress) { <td class="text-end @(sp.PnlUsd >= 0 ? "text-success" : "text-danger")">@N0(sp.PnlUsd) $</td> }</tr>
+                            </tbody>
+                        </table>
+                        <small class="text-muted">Убыток непокрытой продажи не ограничен — за пределами −2σ растёт линейно.</small>
+                    </details>
+                }
+            </article>
+        }
+
+        <div class="grid">
+            <!-- ===== Топ кандидатов ===== -->
+            <article>
+                <header><strong>Топ кандидатов (EV/маржа)</strong></header>
+                <div class="overflow-auto">
+                    <table class="table table-sm table-bordered table-hover mb-0">
+                        <thead>
+                        <tr><th>Инструмент</th><th class="text-end">δ</th><th class="text-end">Бид $</th>
+                            <th class="text-end">EV $</th><th class="text-end">EV/маржа</th>
+                            <th class="text-end">P(OTM)</th><th>За стеной</th></tr>
+                        </thead>
+                        <tbody>
+                        @foreach (SellCandidate c in rec.TopCandidates)
+                        {
+                            <tr>
+                                <td><small>@c.Instrument</small></td>
+                                <td class="text-end">@c.Delta.ToString("+0.00;-0.00")</td>
+                                <td class="text-end">@N0(c.BidUsd)</td>
+                                <td class="text-end @(c.EvUsd > 0 ? "text-success" : "text-danger")">@N0(c.EvUsd)</td>
+                                <td class="text-end">@((c.EvOnMargin * 100).ToString("0.00"))%</td>
+                                <td class="text-end">@Pct((1 - c.ProbItm) * 100)%</td>
+                                <td>@(c.BehindWall ? "да" : "нет")</td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                </div>
+            </article>
+
+            <!-- ===== Уровни ===== -->
+            <article>
+                <header><strong>Уровни</strong></header>
+                <table class="table table-sm table-bordered mb-0">
+                    <thead><tr><th>Уровень</th><th class="text-end">Цена</th><th class="text-end">Откл.%</th></tr></thead>
+                    <tbody>
+                    @foreach (SellLevel l in rec.Levels)
+                    {
+                        <tr>
+                            <td>@l.Label</td>
+                            <td class="text-end">@N2(l.Price)</td>
+                            <td class="text-end @(l.DistancePercent > 0 ? "text-success" : l.DistancePercent < 0 ? "text-danger" : "text-muted")">@l.DistancePercent.ToString("+0.00;-0.00;0.00")</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </article>
+        </div>
+
+        @if (rec.BiasComponents.Any())
+        {
+            <details class="mt-3">
+                <summary><strong>Сигналы направления</strong> — итог @rec.BiasScore.ToString("+0.00;-0.00;0.00")</summary>
+                <table class="table table-sm table-bordered mt-2 mb-1">
+                    <thead><tr><th>Сигнал</th><th class="text-end">Голос</th><th class="text-end">Вес</th><th class="text-end">Вклад</th><th>Пояснение</th></tr></thead>
+                    <tbody>
+                    @foreach (BiasComponent bc in rec.BiasComponents)
+                    {
+                        <tr>
+                            <td>@bc.Name</td>
+                            <td class="text-end">@bc.Normalized.ToString("+0.00;-0.00;0.00")</td>
+                            <td class="text-end">@bc.Weight.ToString("0.00")</td>
+                            <td class="text-end">@bc.Contribution.ToString("+0.00;-0.00;0.00")</td>
+                            <td><small>@bc.Explanation</small></td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </details>
+        }
+
+        <p class="mt-3"><small class="text-muted">Не является инвестиционной рекомендацией. Вероятности — модельные (Black-76); убыток непокрытой продажи не ограничен.</small></p>
+    }
+    else
+    {
+        <div class="option-data-container">
+            <h4>Premium Sell</h4>
+            <p>Нет данных. Выберите валюту и экспирацию, затем нажмите «Load Data».</p>
+        </div>
+    }
+</div>

@@ -59,4 +59,20 @@ public record OptionData
     ///  Гамма опциона Put.
     /// </summary>
     public double PutGamma { get; set; }
+
+    /// <summary>
+    /// Лучший бид Call в USD (bid_coin × UnderlyingPrice) — цена, которую реально получает
+    /// ПРОДАВЕЦ опциона. ИНВАРИАНТ: как и CallPrice/PutPrice, все цены в OptionData — в USD.
+    /// 0 — бида нет либо источник его не отдаёт (исторический путь из БД).
+    /// </summary>
+    public double CallBid { get; set; }
+
+    /// <summary>Лучший аск Call в USD. 0 — нет аска/источник не отдаёт.</summary>
+    public double CallAsk { get; set; }
+
+    /// <summary>Лучший бид Put в USD. 0 — нет бида/источник не отдаёт.</summary>
+    public double PutBid { get; set; }
+
+    /// <summary>Лучший аск Put в USD. 0 — нет аска/источник не отдаёт.</summary>
+    public double PutAsk { get; set; }
 }

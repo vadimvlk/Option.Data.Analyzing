@@ -97,7 +97,11 @@ public sealed class DeribitOptionBoardSource : IOptionBoardSource
                     Iv = call?.MarkIv ?? (put?.MarkIv ?? 0),
                     PutIv = put?.MarkIv ?? 0,
                     PutOi = put?.OpenInterest ?? 0,
-                    PutPrice = put?.MarkPrice * put?.UnderlyingPrice ?? 0
+                    PutPrice = put?.MarkPrice * put?.UnderlyingPrice ?? 0,
+                    CallBid = call?.BidPrice * call?.UnderlyingPrice ?? 0,
+                    CallAsk = call?.AskPrice * call?.UnderlyingPrice ?? 0,
+                    PutBid = put?.BidPrice * put?.UnderlyingPrice ?? 0,
+                    PutAsk = put?.AskPrice * put?.UnderlyingPrice ?? 0
                 };
             })
             .ToList();
