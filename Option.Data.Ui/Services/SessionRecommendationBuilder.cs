@@ -65,6 +65,11 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
     private const double FadeEntryDepthSigmas = 0.4;
     /// <summary>Стоп фейда — за стеной.</summary>
     private const double FadeStopSigmas = 0.6;
+    /// <summary>
+    /// Максимальная дистанция от спота до стены фейда (в σ сессии): дальше отложенный
+    /// вход — не план сессии (у дальних экспираций стены лежат в десятках σ). КАЛИБРУЕМО.
+    /// </summary>
+    private const double FadeMaxWallDistSigmas = 3.0;
     /// <summary>Полуширина зоны входа импульсной/направленной сделки «от рынка».</summary>
     private const double MarketEntryHalfSigmas = 0.2;
     /// <summary>Стоп импульсной сделки без flip-привязки.</summary>
@@ -525,8 +530,8 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
         }
 
         return plan ?? StandAsidePrimary(
-            $"+гамма, но диапазон {Fmt(support)}…{Fmt(resistance)} слишком узок — R:R фейда ниже {FadeMinRR.ToString("0.0", CultureInfo.InvariantCulture)}.",
-            "Сетап появится при расширении диапазона стен или подходе цены вплотную к стене.");
+            $"+гамма, но сессионного фейда нет: стены {Fmt(support)}…{Fmt(resistance)} дальше {FadeMaxWallDistSigmas.ToString("0.#", CultureInfo.InvariantCulture)}σ сессии, отрезаны gamma-flip (у стены режим уже −гамма) или R:R ниже {FadeMinRR.ToString("0.0", CultureInfo.InvariantCulture)}.",
+            "Сетап появится при подходе цены к стене в пределах +гамма-зоны либо при изменении карты OI.");
     }
 
     /// <summary>
@@ -540,6 +545,21 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
         double horizonDte, bool conditional)
     {
         int dir = side == TradeSide.Short ? -1 : +1;
+
+        // Режимная согласованность: фейд осмыслен, только пока ВЕСЬ путь от спота до стены
+        // лежит в +гамме. Если gamma-flip находится МЕЖДУ спотом и стеной, то у стены режим
+        // уже −гамма: эта же модель там покажет «импульс по движению», и вход от такой стены
+        // противоречил бы собственному прогнозу системы (вход в зоне, где дилеры разгоняют
+        // движение, а не гасят его).
+        if (gammaFlip is { } flipPx && double.IsFinite(flipPx) &&
+            (wall - flipPx) * (spot - flipPx) < 0)
+            return null;
+
+        // Сессионная достижимость: стена дальше FadeMaxWallDistSigmas σ сессии — не план
+        // сессии. У дальних экспираций GEX-стены лежат в десятках σ (напр. −40% от спота),
+        // и «отложенный вход у стены» там не имеет операционного смысла.
+        if (Math.Abs(wall - spot) > FadeMaxWallDistSigmas * s)
+            return null;
 
         double entryNear = wall + dir * FadeEntryDepthSigmas * s; // край зоны, ближний к центру (внутрь диапазона)
         double entryLow = Math.Min(entryNear, wall);

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- Диагностический инструмент: бэктест ТОРГОВЛИ по рекомендациям Trade. Не деплоится. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Боевые билдеры (SessionRecommendationBuilder и т.д.) + EF/Npgsql. -->
+    <ProjectReference Include="..\Option.Data.Ui\Option.Data.Ui.csproj" />
+  </ItemGroup>
+
+</Project>

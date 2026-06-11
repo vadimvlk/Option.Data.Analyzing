@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- Калибровочный/аналитический инструмент, не часть деплоя. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- ApplicationDbContext + Npgsql + POCO (та же схема, что в проде). -->
+    <ProjectReference Include="..\Option.Data.Database\Option.Data.Database.csproj" />
+  </ItemGroup>
+
+</Project>
