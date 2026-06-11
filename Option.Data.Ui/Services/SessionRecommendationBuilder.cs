@@ -314,6 +314,15 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
                 callWallStrike, putWallStrike, pinStrike, gammaFlip)
         };
 
+        // Одиночная серия, истекающая раньше торговой сессии: профиль гаммы/стены этой
+        // экспирации перестанут существовать в 08:00 UTC, а стоп/цель — останутся.
+        // План не запрещаем (пин-эффекты у экспирации реальны), но предупреждаем в нём самом.
+        if (!isAggregated && horizonDte < 1.0 && rec.Primary.Action != TradeAction.StandAside)
+        {
+            rec.Primary.Reason +=
+                $" ВНИМАНИЕ: экспирация через ~{rec.HoursToFrontExpiry:0} ч — карта уровней действует только до неё; закрыть позицию до экспирации.";
+        }
+
         return rec;
     }
 
@@ -577,6 +586,11 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
             ? wall + FadeStopSigmas * s
             : wall - FadeStopSigmas * s;
 
+        // Вырожденная геометрия: спот уже ЗА стопом (стена пробита глубже буфера) —
+        // по собственному критерию инвалидации этот фейд уже отменён, публиковать нечего.
+        if (dir < 0 ? spot >= stop : spot <= stop)
+            return null;
+
         // Кандидаты-цели: пин, flip, Max Pain (только у экспирации), середина и дальняя
         // граница диапазона — все строго в сторону сделки.
         var candidates = new List<double>();
@@ -585,6 +599,10 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
         if (horizonDte <= MaxPainTargetMaxDte) candidates.Add(maxPain);
         candidates.Add((wall + oppositeBoundary) / 2.0);
         candidates.Add(oppositeBoundary - dir * 0.3 * s); // чуть НЕ доходя до противоположной стены
+
+        // Цели фейда — строго ВНУТРИ диапазона: за противоположной границей идея
+        // «возврат к центру» не действует (отсекает дальние Max Pain/пин/флип).
+        candidates.RemoveAll(p => dir < 0 ? p < oppositeBoundary : p > oppositeBoundary);
 
         (double target, double rr)? pick = PickTarget(candidates, entryMid, stop, dir,
             FadeMinTargetSigmas * s, FadeMinRR);
@@ -680,6 +698,18 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
             candidates.Add(rec.Range.Upper2);
         }
         if (pinStrike is { } pin) candidates.Add(pin);
+
+        // Режимная согласованность цели: если gamma-flip лежит ПО НАПРАВЛЕНИЮ сделки
+        // (импульс против структуры), за флипом начинается +гамма — разгоняющая идея
+        // там мертва, и эта же модель рекомендует фейд. Цели за флипом отбрасываем,
+        // вместо них — «чуть не доходя до флипа». Сделка ПО структуре не затрагивается:
+        // у неё флип на стороне стопа.
+        if (gammaFlip is { } flipT && double.IsFinite(flipT) &&
+            (dir > 0 ? flipT > entryMid : flipT < entryMid))
+        {
+            candidates.RemoveAll(p => dir > 0 ? p > flipT : p < flipT);
+            candidates.Add(flipT - dir * FlipStopBufferSigmas * s);
+        }
 
         (double target, double rr)? pick = PickTarget(candidates, entryMid, stop, dir,
             BreakoutMinTargetSigmas * s, BreakoutMinRR);

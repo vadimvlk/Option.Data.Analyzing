@@ -46,6 +46,86 @@ List<string> expirations = rows
 
 List<string> aggWindow = QuarterlyAggregation.WindowExpirations(expirations, asOf);
 
+// ===== Смоук-режим ALL: все экспирации снимка + «Сводка», по строке на план =====
+if (singleExp == "ALL")
+{
+    List<DeribitData> allRows = await ctx.DeribitData.AsNoTracking()
+        .Where(d => d.CurrencyTypeId == curId)
+        .ToListAsync();
+
+    // Индекс по срезам: время → экспирация → (max форвард, −Σ(Δ·OI)) — для боевых дельта-рядов.
+    var perExp = new Dictionary<DateTimeOffset, Dictionary<string, (double Px, double Dex)>>();
+    foreach (DeribitData d in allRows)
+    {
+        if (!perExp.TryGetValue(d.CreatedAt, out Dictionary<string, (double Px, double Dex)>? byExp))
+            perExp[d.CreatedAt] = byExp = new Dictionary<string, (double Px, double Dex)>();
+        (double px, double dex) = byExp.TryGetValue(d.Expiration, out (double Px, double Dex) cur)
+            ? cur : (0.0, 0.0);
+        byExp[d.Expiration] = (Math.Max(px, d.UnderlyingPrice), dex - d.Delta * d.OpenInterest);
+    }
+    List<DateTimeOffset> allTimes = perExp.Keys.OrderBy(t => t).ToList();
+
+    List<DeltaPoint> SeriesFor(List<string> exps)
+    {
+        var series = new List<DeltaPoint>();
+        foreach (DateTimeOffset t in allTimes)
+        {
+            double px = double.MinValue, dex = 0;
+            bool any = false;
+            foreach (string e in exps)
+                if (perExp[t].TryGetValue(e, out (double Px, double Dex) a))
+                {
+                    any = true;
+                    px = Math.Max(px, a.Px);
+                    dex += a.Dex;
+                }
+            if (any)
+                series.Add(new DeltaPoint { Time = t, UnderlyingPrice = px, DeltaExposure = dex });
+        }
+        return series;
+    }
+
+    string PlanLine(SessionRecommendation r)
+    {
+        string regime = r.Regime switch
+        {
+            VolatilityRegime.PositiveGamma => "+γ",
+            VolatilityRegime.NegativeGamma => "−γ",
+            _ => "≈0"
+        };
+        string head = $"{regime} {r.NetGexAtSpot,15:N0} | flip {(r.GammaFlip is { } gfp ? gfp.ToString("N0", CultureInfo.InvariantCulture) : "—"),8} " +
+                      $"| σс ±{r.Range.SessionSigmaUsd,6:N0} | bias {r.BiasScore,5:+0.00;-0.00} | ";
+        PrimaryTrade p = r.Primary;
+        if (p.Action == TradeAction.StandAside)
+            return head + $"ВНЕ РЫНКА: {p.Reason}";
+        return head + $"{p.Action} {(p.Side == TradeSide.Short ? "SHORT" : "LONG")}{(p.IsConditional ? " (отлож.)" : "")} " +
+               $"вход {p.EntryLow:N0}…{p.EntryHigh:N0} стоп {p.Stop:N0} цель {p.Target:N0} RR {p.RiskReward:0.00}";
+    }
+
+    var expB = new ExpirationAnalysisBuilder();
+    var sessB = new SessionRecommendationBuilder();
+
+    Console.WriteLine($"=== {symbol} · СМОУК ВСЕХ ЭКСПИРАЦИЙ · снимок {asOf:yyyy-MM-dd HH:mm} UTC ===");
+    foreach (string e in expirations)
+    {
+        double dte = OptionExposureMath.YearsToExpiry(e, asOf) * 365.0;
+        ExpirationAnalysis? an = expB.Build(rows, [e], asOf).FirstOrDefault();
+        if (an is null || an.OptionData.Count == 0)
+        {
+            Console.WriteLine($"{e,-8} {dte,6:0.0}д | нет данных");
+            continue;
+        }
+        SessionRecommendation r1 = sessB.Build(an, symbol, asOf, SessionAnalysisMath.DexTrend(SeriesFor([e])));
+        Console.WriteLine($"{e,-8} {dte,6:0.0}д | {PlanLine(r1)}");
+    }
+
+    List<ExpirationAnalysis> aggAns = expB.Build(rows, aggWindow, asOf);
+    SessionRecommendation rAgg = sessB.BuildAggregate(aggAns, symbol, asOf,
+        SessionAnalysisMath.DexTrend(SeriesFor(aggWindow)));
+    Console.WriteLine($"{"СВОДКА",-8} {"",7} | {PlanLine(rAgg)}");
+    return;
+}
+
 // Одиночный режим: дельта-ряд и цепочка только по выбранной экспирации (как на странице).
 List<string> deltaExpirations = singleExp is null ? aggWindow : [singleExp];
 
