@@ -35,6 +35,13 @@ public class ContractMemory
     public double RecentRunupPct { get; set; }          // изменение цены за ~24ч, % (знак: + рост)
     public double RecentDrawdownPct { get; set; }       // просадка от цены 24ч назад, %
 
+    // −γ-пик: страйк самого отрицательного net-GEX (дилерский «пол»), и взаимодействие цены с ним.
+    public double? NegGammaPeakStrike { get; set; }
+    public double NegGammaPeakDistPct { get; set; }     // (spot − peak)/spot·100 (>0 — спот выше пика)
+    public bool NegGammaReached { get; set; }           // цена доходила до пика за окно (~5 дней)
+    public bool NegGammaPierced { get; set; }           // сейчас НИЖЕ пика (пробой), иначе отскок
+    public string NegGammaNote { get; set; } = "";      // двусторонняя нота (отскок/пробой)
+
     public double OiRepresentativeness { get; set; }    // 0..1: доля OI серии от макс. экспирации (1 для Сводки)
     public bool IsThin { get; set; }                    // низкая репрезентативность одиночной серии
 

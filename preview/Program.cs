@@ -286,6 +286,9 @@ if (rec.Memory is { } m)
     Console.WriteLine($"Поток OI на стенах за 24ч: CALL {(m.CallWallOiFlow is { } cwf ? cwf.ToString("+0;-0", CultureInfo.InvariantCulture) : "—")}, " +
                       $"PUT {(m.PutWallOiFlow is { } pwf ? pwf.ToString("+0;-0", CultureInfo.InvariantCulture) : "—")}");
     Console.WriteLine($"Net GEX за 24ч: {(m.NetGexChange is { } ngc ? ngc.ToString("+0;-0", CultureInfo.InvariantCulture) : "—")}; откат цены за 24ч {m.RecentRunupPct:+0.0;-0.0}%");
+    Console.WriteLine($"−γ-пик (самый отрицательный net-GEX): {(m.NegGammaPeakStrike is { } np ? F0(np) : "—")} ({m.NegGammaPeakDistPct:+0.0;-0.0}% от спота)" +
+                      (m.NegGammaReached ? (m.NegGammaPierced ? " — ПРОБИТ вниз" : " — отскок вверх") : " — не достигнут за ~5д"));
+    if (!string.IsNullOrEmpty(m.NegGammaNote)) Console.WriteLine($"  → {m.NegGammaNote}");
     Console.WriteLine($"Репрезентативность OI: {(m.OiRepresentativeness * 100):0}% от макс. серии{(m.IsThin ? " — ТОНКАЯ серия" : "")}");
     Console.WriteLine($"Стоп рекомендации в зоне отскока к flip: {(m.StopInsideBounceZone ? "ДА" : "нет")}");
 }

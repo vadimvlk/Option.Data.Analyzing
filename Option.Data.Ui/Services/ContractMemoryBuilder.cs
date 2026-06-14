@@ -15,6 +15,8 @@ public class ContractMemoryBuilder : IContractMemoryBuilder
     private const double LookbackTolHours = 6.0;
     private const int RangeWindow = 160;           // ~20 дней (8 срезов/день) для реализованного диапазона
     private const double ThinOiShare = 0.10;       // доля OI < этого порога → тонкая серия
+    private const int NegGammaLookback = 40;       // ~5 дней — окно поиска касания −γ-пика
+    private const double NegGammaTouchPct = 0.01;  // «дошла до пика» = в пределах 1% от страйка
 
     public ContractMemory Build(IReadOnlyList<MemorySnapshot> history, double currentExpirationOi, double maxExpirationOi)
     {
@@ -66,6 +68,31 @@ public class ContractMemoryBuilder : IContractMemoryBuilder
         double? cwNow = SessionAnalysisMath.GexCallWall(bdNow, cur.Spot);
         double? pwNow = SessionAnalysisMath.GexPutWall(bdNow, cur.Spot);
         m.FlipNow = flipNow;
+
+        // −γ-пик: страйк с самым отрицательным net-GEX (пут-доминируемый «пол»).
+        // Касание за ~5 дней + отскочила (сейчас выше пика) / прошила (сейчас ниже).
+        double? negPeak = null;
+        double worstNet = 0;
+        foreach (SessionAnalysisMath.StrikeGexBreakdown b in bdNow)
+        {
+            double net = b.CallGex - b.PutGex;   // <0 — пут-доминируемый страйк
+            if (net < worstNet) { worstNet = net; negPeak = b.Strike; }
+        }
+        m.NegGammaPeakStrike = negPeak;
+        if (negPeak is { } peak && peak > 0 && cur.Spot > 0)
+        {
+            m.NegGammaPeakDistPct = (cur.Spot - peak) / cur.Spot * 100.0;
+            int fromNg = Math.Max(0, n - NegGammaLookback);
+            double minSpotNg = double.MaxValue;
+            for (int i = fromNg; i < n; i++)
+                if (history[i].Spot > 0) minSpotNg = Math.Min(minSpotNg, history[i].Spot);
+            m.NegGammaReached = double.IsFinite(minSpotNg) && minSpotNg <= peak * (1 + NegGammaTouchPct);
+            m.NegGammaPierced = cur.Spot < peak;
+            if (m.NegGammaReached)
+                m.NegGammaNote = m.NegGammaPierced
+                    ? $"цена пробила −γ-пик {peak:N0} вниз — в −γ пробой ускоряет движение (продолжение вниз)"
+                    : $"цена доходила до −γ-пика {peak:N0} и отскочила вверх — у дилерского «пола» возможно истощение; свежий шорт в отскок рискован";
+        }
 
         // Срез ~24ч назад (ближайший в пределах допуска).
         int past = PastIndex(history, n - 1, LookbackHours, LookbackTolHours);

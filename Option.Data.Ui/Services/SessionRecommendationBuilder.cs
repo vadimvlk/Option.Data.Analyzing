@@ -381,8 +381,10 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
                               $"({depth.ToString("0.0", CultureInfo.InvariantCulture)}σ): возврат к flip выбьет {side} до возобновления движения.";
 
                 int dir = pt.Side == TradeSide.Short ? -1 : +1;
-                double consEntry = flip - dir * ConservativeBufferSigmas * sessionSigma;
-                double consStop = flip + dir * ConservativeBufferSigmas * sessionSigma;
+                // Вход у flip на возврате ПРОТИВ хода (для шорта — чуть ниже flip, ловим отскок вверх),
+                // стоп ЗА flip (для шорта — выше: пробой flip вверх = смена режима, идея мертва).
+                double consEntry = flip + dir * ConservativeBufferSigmas * sessionSigma;
+                double consStop = flip - dir * ConservativeBufferSigmas * sessionSigma;
                 if (pt.Target is { } target && Math.Abs(consStop - consEntry) > 0)
                 {
                     pt.ConservativeEntry = consEntry;

@@ -338,7 +338,7 @@
                 }
                 @if (!string.IsNullOrEmpty(pt.RiskNote))
                 {
-                    <p class="mb-1 mt-2"><small class="text-warning">⚠ <strong>Риск (память):</strong> @pt.RiskNote</small></p>
+                    <div class="alert alert-warning py-2 px-3 mb-2 mt-2"><small class="mb-0">⚠ <strong>Риск (память):</strong> @pt.RiskNote</small></div>
                 }
                 @if (pt.ConservativeEntry is { } ce)
                 {
@@ -455,6 +455,17 @@
                     Δ Net GEX за 24ч @(mem.NetGexChange is { } ngc ? ngc.ToString("+0;-0") : "—") ·
                     OI серии @((mem.OiRepresentativeness * 100).ToString("0"))% от самой ликвидной@(mem.IsThin ? " — тонкая серия, ниже уверенность" : "")
                 </small>
+                @if (mem.NegGammaPeakStrike is { } np)
+                {
+                    <p class="mb-0 mt-2"><small>
+                        <strong>−γ-пик:</strong> @np.ToString("N0") (@mem.NegGammaPeakDistPct.ToString("+0.0;-0.0")% от спота) —
+                        @(mem.NegGammaReached ? (mem.NegGammaPierced ? "пробит вниз" : "цена отскочила вверх") : "не достигнут за ~5 дн")
+                    </small></p>
+                    @if (!string.IsNullOrEmpty(mem.NegGammaNote))
+                    {
+                        <p class="mb-0"><small class="text-muted"><em>@mem.NegGammaNote</em></small></p>
+                    }
+                }
             </article>
         }
 
