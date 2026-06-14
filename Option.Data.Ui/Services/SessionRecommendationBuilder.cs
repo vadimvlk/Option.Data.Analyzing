@@ -680,9 +680,23 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
                     support, pinStrike, maxPain, gammaFlip, horizonDte, conditional: true);
         }
 
-        return plan ?? StandAsidePrimary(
-            $"+гамма, но сессионного фейда нет: стены {Fmt(support)}…{Fmt(resistance)} дальше {FadeMaxWallDistSigmas.ToString("0.#", CultureInfo.InvariantCulture)}σ сессии, отрезаны gamma-flip (у стены режим уже −гамма) или R:R ниже {FadeMinRR.ToString("0.0", CultureInfo.InvariantCulture)}.",
-            "Сетап появится при подходе цены к стене в пределах +гамма-зоны либо при изменении карты OI.");
+        if (plan is not null)
+            return plan;
+
+        // Конкретная причина, почему фейд от стены не строится (вместо общей заглушки «3σ ИЛИ flip ИЛИ R:R»):
+        // приоритет — отсечение gamma-flip, затем дальность стены, иначе тесный диапазон (цель ближе порога R:R).
+        string FadeBlockReason(double wall)
+        {
+            if (gammaFlip is { } f && double.IsFinite(f) && (wall - f) * (spot - f) < 0)
+                return $"стена {Fmt(wall)} за gamma-flip {Fmt(f)} (там уже −γ)";
+            if (Math.Abs(wall - spot) > FadeMaxWallDistSigmas * s)
+                return $"стена {Fmt(wall)} дальше {FadeMaxWallDistSigmas.ToString("0.#", CultureInfo.InvariantCulture)}σ сессии";
+            return $"до стены {Fmt(wall)} цель ближе порога R:R {FadeMinRR.ToString("0.0", CultureInfo.InvariantCulture)} (тесный диапазон)";
+        }
+
+        return StandAsidePrimary(
+            $"+гамма, но фейд не строится: ШОРТ от сопротивления — {FadeBlockReason(resistance)}; ЛОНГ от поддержки — {FadeBlockReason(support)}.",
+            "Сетап появится при подходе цены к стене внутри +гамма-зоны либо при изменении карты OI/flip.");
     }
 
     /// <summary>
