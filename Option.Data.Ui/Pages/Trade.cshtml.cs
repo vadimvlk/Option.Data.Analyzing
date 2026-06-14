@@ -2,6 +2,7 @@ using System.Globalization;
 using Option.Data.Database;
 using Option.Data.Ui.Models;
 using Option.Data.Ui.Services;
+using Option.Data.Shared.Dto;
 using Option.Data.Shared.Poco;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -14,7 +15,8 @@ public class TradeModel(
     IMemoryCache cache,
     ILogger<TradeModel> logger,
     IExpirationAnalysisBuilder expirationBuilder,
-    ISessionRecommendationBuilder sessionBuilder) : BaseOptionPageModel(context, cache, logger)
+    ISessionRecommendationBuilder sessionBuilder,
+    IContractMemoryBuilder memoryBuilder) : BaseOptionPageModel(context, cache, logger)
 {
     [BindProperty]
     public SessionRecommendation? Recommendation { get; set; }
@@ -148,6 +150,13 @@ public class TradeModel(
             // Тренд потока DEX (−1…+1) по последним снимкам — передаётся билдеру как сигнал.
             double dexFlowTrend = SessionAnalysisMath.DexTrend(deltaSeries);
 
+            // Память контракта — из тех же deltaRows (история окна/серии по срезам). curOi — ΣOI серии/окна
+            // на последнем срезе; maxOi — макс. ΣOI среди ВСЕХ серий снимка (репрезентативность OI).
+            List<MemorySnapshot> memHistory = BuildMemoryHistory(deltaRows, asOf);
+            double curOi = memHistory.Count > 0 ? memHistory[^1].Chain.Sum(o => o.CallOi + o.PutOi) : 0;
+            double maxOi = rows.GroupBy(r => r.Expiration).Select(g => g.Sum(r => r.OpenInterest)).DefaultIfEmpty(0).Max();
+            ContractMemory memory = memoryBuilder.Build(memHistory, curOi, maxOi);
+
             if (isAggregate)
             {
                 // Агрегированная сводка: окно ближних + квартальной.
@@ -159,7 +168,7 @@ public class TradeModel(
                     return;
                 }
 
-                Recommendation = sessionBuilder.BuildAggregate(analyses, currency, asOf, dexFlowTrend);
+                Recommendation = sessionBuilder.BuildAggregate(analyses, currency, asOf, dexFlowTrend, memory);
             }
             else
             {
@@ -174,7 +183,7 @@ public class TradeModel(
                     return;
                 }
 
-                Recommendation = sessionBuilder.Build(selected, currency, asOf, dexFlowTrend);
+                Recommendation = sessionBuilder.Build(selected, currency, asOf, dexFlowTrend, memory);
             }
 
             // Дельта-ряд показываем только вместе с рекомендацией: canvas графика
@@ -189,5 +198,65 @@ public class TradeModel(
             ModelState.AddModelError(string.Empty, $"Error loading data: {e.Message}");
             Recommendation = null;
         }
+    }
+
+    /// <summary>
+    /// Преобразует исторические строки экспирации/окна в срезы <see cref="MemorySnapshot"/>
+    /// (по возрастанию времени, ≤ asOf): GammaStrike по (экспирация, страйк) с собственным T/IV,
+    /// сводная цепочка ΣOI по страйку. Соглашения — как в BuildGammaStrikes/ConvertToOptionData.
+    /// </summary>
+    private static List<MemorySnapshot> BuildMemoryHistory(List<DeribitData> rows, DateTimeOffset asOf)
+    {
+        var snapshots = new List<MemorySnapshot>();
+
+        foreach (IGrouping<DateTimeOffset, DeribitData> snap in rows
+                     .Where(r => r.CreatedAt <= asOf)
+                     .GroupBy(r => r.CreatedAt)
+                     .OrderBy(g => g.Key))
+        {
+            double spot = snap.Max(r => r.UnderlyingPrice);
+            if (spot <= 0 || !double.IsFinite(spot))
+                continue;
+
+            // GammaStrike: по каждой (экспирация, страйк) — свой T (от среза) и IV.
+            var gammaStrikes = new List<SessionAnalysisMath.GammaStrike>();
+            foreach (IGrouping<string, DeribitData> expG in snap.GroupBy(r => r.Expiration))
+            {
+                double t = OptionExposureMath.YearsToExpiry(expG.Key, snap.Key);
+                if (t <= 0)
+                    continue;
+
+                foreach (IGrouping<int, DeribitData> kG in expG.GroupBy(r => r.Strike))
+                {
+                    double callOi = 0, putOi = 0, callIv = 0, putIv = 0;
+                    foreach (DeribitData r in kG)
+                    {
+                        if (r.OptionTypeId == 1) { callOi += r.OpenInterest; if (r.Iv > 0) callIv = r.Iv; }
+                        else { putOi += r.OpenInterest; if (r.Iv > 0) putIv = r.Iv; }
+                    }
+                    if (callOi <= 0 && putOi <= 0)
+                        continue;
+
+                    double sigma = (callIv > 0 ? callIv : putIv) / 100.0;
+                    gammaStrikes.Add(new SessionAnalysisMath.GammaStrike(kG.Key, callOi, putOi, sigma, t));
+                }
+            }
+
+            // Сводная цепочка: ΣOI по страйку через все серии окна (для OI/стен).
+            List<OptionData> chain = snap
+                .GroupBy(r => r.Strike)
+                .Select(kG => new OptionData
+                {
+                    Strike = kG.Key,
+                    CallOi = kG.Where(r => r.OptionTypeId == 1).Sum(r => r.OpenInterest),
+                    PutOi = kG.Where(r => r.OptionTypeId == 2).Sum(r => r.OpenInterest)
+                })
+                .OrderBy(o => o.Strike)
+                .ToList();
+
+            snapshots.Add(new MemorySnapshot(snap.Key, spot, gammaStrikes, chain));
+        }
+
+        return snapshots;
     }
 }

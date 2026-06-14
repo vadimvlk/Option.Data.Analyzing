@@ -9,11 +9,13 @@ public interface ISessionRecommendationBuilder
     /// &gt;0 — DEX растёт (накопление защитных позиций; эмпирически контрарно-бычий маркер),
     /// &lt;0 — падает (разгрузка защиты; медвежий), 0 — нет истории/сигнала.
     /// </param>
+    /// <param name="memory">Память контракта (история экспирации): источник сигналов памяти и контекста. null — не строить.</param>
     SessionRecommendation Build(
         ExpirationAnalysis selected,
         string currency,
         DateTimeOffset asOf,
-        double dexFlowTrend = 0);
+        double dexFlowTrend = 0,
+        ContractMemory? memory = null);
 
     /// <summary>
     /// Агрегированный план по окну экспираций (ближние + квартальная). Профиль гаммы
@@ -25,5 +27,6 @@ public interface ISessionRecommendationBuilder
         IReadOnlyList<ExpirationAnalysis> window,
         string currency,
         DateTimeOffset asOf,
-        double dexFlowTrend = 0);
+        double dexFlowTrend = 0,
+        ContractMemory? memory = null);
 }

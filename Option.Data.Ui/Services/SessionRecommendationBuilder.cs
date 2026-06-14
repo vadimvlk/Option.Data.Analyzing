@@ -46,6 +46,26 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
     /// <summary>Вес скоса 25Δ Risk Reversal.</summary>
     private const double WeightSkew = 0.20;
 
+    // ---------- Сигналы ПАМЯТИ (валидированы IC, знак согласован BTC↔ETH; бэктест 2026-06-14). КАЛИБРУЕМО. ----------
+    // Веса НАМЕРЕННО малы: существующие сигналы (особенно структурный на ETH) валидированы торговой
+    // симуляцией; память — лёгкий тилт (помогает BTC, где старые сигналы слабы), не разбавляющий их.
+
+    /// <summary>Вес миграции gamma-flip за 24ч (знак +: flip ползёт вверх → бычий). Сильнейший новый предиктор.</summary>
+    private const double WeightFlipMigration = 0.18;
+    /// <summary>Вес потока OI на стенах (знак −: набор PUT-стены → вверх, CALL-стены → вниз).</summary>
+    private const double WeightWallFlow = 0.10;
+    /// <summary>Вес тренда Net GEX у спота за 24ч (знак +: рост → бычий).</summary>
+    private const double WeightNetGexTrend = 0.04;
+    /// <summary>Вес положения в реализованном диапазоне (знак +: моментум, вверху → вверх).</summary>
+    private const double WeightRangePosition = 0.04;
+
+    /// <summary>Нормировка сырого WallFlowOi: доля от ΣOI, при которой голос насыщается (tanh). КАЛИБРУЕМО.</summary>
+    private const double WallFlowOiScale = 0.03;
+    /// <summary>Буфер консервативного входа/стопа за gamma-flip, σ сессии. КАЛИБРУЕМО.</summary>
+    private const double ConservativeBufferSigmas = 0.3;
+    /// <summary>Динамический сигнал памяти подмешивается в bias только при |голос| ≥ порога: плоская память (flip/стены не двигались) НЕ разбавляет конвикцию. КАЛИБРУЕМО.</summary>
+    private const double MemorySignalEpsilon = 0.05;
+
     /// <summary>Скос (в пунктах волатильности), при котором сигнал скоса насыщается (tanh). КАЛИБРУЕМО.</summary>
     private const double SkewScaleVolPts = 8.0;
     /// <summary>|тренд DEX| ниже порога считается отсутствием потока (берётся статический фолбэк). КАЛИБРУЕМО.</summary>
@@ -105,7 +125,8 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
     private const double LevelDedupPercent = 0.1;
 
     public SessionRecommendation Build(
-        ExpirationAnalysis selected, string currency, DateTimeOffset asOf, double dexFlowTrend = 0)
+        ExpirationAnalysis selected, string currency, DateTimeOffset asOf, double dexFlowTrend = 0,
+        ContractMemory? memory = null)
     {
         if (selected is null || selected.OptionData.Count == 0)
         {
@@ -124,12 +145,12 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
         return Assemble(currency, asOf, selected.Expiration, tYears * 365.0, spot,
             gammaStrikes, selected.OptionData, atmIv, sessionIv: atmIv, tYears,
             selected.DollarDeltaExposure, dexFlowTrend, selected.RiskReversal25Delta,
-            isAggregated: false, aggregatedCount: 1);
+            isAggregated: false, aggregatedCount: 1, memory: memory);
     }
 
     public SessionRecommendation BuildAggregate(
         IReadOnlyList<ExpirationAnalysis> window, string currency,
-        DateTimeOffset asOf, double dexFlowTrend = 0)
+        DateTimeOffset asOf, double dexFlowTrend = 0, ContractMemory? memory = null)
     {
         if (window is null || window.Count == 0 || window.All(a => a.OptionData.Count == 0))
         {
@@ -169,7 +190,7 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
 
         return Assemble(currency, asOf, horizon.Expiration, tYears * 365.0, spot,
             gammaStrikes, chain, atmIv, sessionIv, tYears, dexRaw, dexFlowTrend, rr25,
-            isAggregated: true, aggregatedCount: window.Count);
+            isAggregated: true, aggregatedCount: window.Count, memory: memory);
     }
 
     /// <summary>Сводная цепочка окна: ΣCallOi/ΣPutOi по страйку (страйки — точные значения из int БД).</summary>
@@ -203,7 +224,7 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
         IReadOnlyList<OptionData> chain,
         double atmIv, double sessionIv, double tYears,
         double dexRaw, double dexFlowTrend, double? rr25,
-        bool isAggregated, int aggregatedCount)
+        bool isAggregated, int aggregatedCount, ContractMemory? memory = null)
     {
         var rec = new SessionRecommendation
         {
@@ -293,9 +314,9 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
         rec.Levels = BuildLevels(rec, spot, chain, callWallStrike, putWallStrike,
             pinStrike, maxPain, centroid, gammaFlip);
 
-        // Прозрачные сигналы направления → BiasScore/Bias/BiasComponents.
+        // Прозрачные сигналы направления → BiasScore/Bias/BiasComponents (вкл. сигналы памяти).
         BuildSignals(rec, spot, sessionSigma, gammaFlip, callWallStrike, putWallStrike,
-            dexRaw, dexFlowTrend, rr25, totalOi);
+            dexRaw, dexFlowTrend, rr25, totalOi, memory, profilePeak);
 
         if (totalOi <= 0)
         {
@@ -323,7 +344,57 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
                 $" ВНИМАНИЕ: экспирация через ~{rec.HoursToFrontExpiry:0} ч — карта уровней действует только до неё; закрыть позицию до экспирации.";
         }
 
+        // Память: σ-зависимые поля + аддитивное обогащение плана (не переопределяет движок).
+        if (memory is not null)
+        {
+            rec.Memory = memory;
+            if (gammaFlip is { } gf && double.IsFinite(gf) && sessionSigma > 0)
+                memory.FlipDepthSigmas = (gf - spot) / sessionSigma;
+            EnrichWithMemory(rec, spot, sessionSigma, gammaFlip, memory);
+        }
+
         return rec;
+    }
+
+    /// <summary>
+    /// Аддитивное обогащение плана памятью: риск-заметка о зоне отскока к flip, опц. консервативный
+    /// вход к flip, заметка об уверенности при тонком OI. Движок (Action/Side/Entry/Target/Stop) НЕ
+    /// переопределяется — только информирование.
+    /// </summary>
+    private static void EnrichWithMemory(
+        SessionRecommendation rec, double spot, double sessionSigma, double? gammaFlip, ContractMemory memory)
+    {
+        PrimaryTrade pt = rec.Primary;
+        bool impulse = pt.Action is TradeAction.Breakout or TradeAction.Directional;
+
+        if (impulse && pt.Stop is { } stop && gammaFlip is { } flip && double.IsFinite(flip) && sessionSigma > 0)
+        {
+            bool insideShort = pt.Side == TradeSide.Short && flip > spot && stop < flip;
+            bool insideLong = pt.Side == TradeSide.Long && flip < spot && stop > flip;
+            memory.StopInsideBounceZone = insideShort || insideLong;
+
+            if (memory.StopInsideBounceZone)
+            {
+                double depth = Math.Abs(flip - spot) / sessionSigma;
+                string side = pt.Side == TradeSide.Short ? "шорт" : "лонг";
+                pt.RiskNote = $"Стоп {Fmt(stop)} внутри зоны вероятного отскока к gamma-flip {Fmt(flip)} " +
+                              $"({depth.ToString("0.0", CultureInfo.InvariantCulture)}σ): возврат к flip выбьет {side} до возобновления движения.";
+
+                int dir = pt.Side == TradeSide.Short ? -1 : +1;
+                double consEntry = flip - dir * ConservativeBufferSigmas * sessionSigma;
+                double consStop = flip + dir * ConservativeBufferSigmas * sessionSigma;
+                if (pt.Target is { } target && Math.Abs(consStop - consEntry) > 0)
+                {
+                    pt.ConservativeEntry = consEntry;
+                    pt.ConservativeStop = consStop;
+                    pt.ConservativeRiskReward = Math.Round(Math.Abs(consEntry - target) / Math.Abs(consStop - consEntry), 2);
+                }
+            }
+        }
+
+        if (memory.IsThin && pt.Action != TradeAction.StandAside)
+            pt.ConfidenceNote = $"OI этой серии — {(memory.OiRepresentativeness * 100):0}% от самой ликвидной экспирации: " +
+                                "структура GEX менее надёжна, ниже уверенность.";
     }
 
     /// <summary>
@@ -365,7 +436,8 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
     private static void BuildSignals(
         SessionRecommendation rec, double spot, double sessionSigma,
         double? gammaFlip, double? callWall, double? putWall,
-        double dexRaw, double dexFlowTrend, double? rr25, double totalOi)
+        double dexRaw, double dexFlowTrend, double? rr25, double totalOi,
+        ContractMemory? memory, double profilePeak)
     {
         double safeSigma = sessionSigma > 0 && double.IsFinite(sessionSigma) ? sessionSigma : spot * 0.01;
         var components = new List<BiasComponent>();
@@ -460,6 +532,74 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
                               $"{(rr > 0 ? "путы дороже (страх)" : rr < 0 ? "коллы дороже (жадность)" : "скос плоский")} " +
                               $"→ {(vote > 0.02 ? "вверх" : vote < -0.02 ? "вниз" : "нейтрально")}."
             });
+        }
+
+        // --- 4. Сигналы ПАМЯТИ (история срезов; знаки валидированы IC, согласованы BTC↔ETH) ---
+        // НЕ подмешиваются при нейтральной гамме: там нет режимной конвикции, и торговая симуляция
+        // показала, что память дестабилизирует валидированные направленные сделки нейтрали (ETH).
+        if (memory is not null && rec.Regime != VolatilityRegime.Neutral)
+        {
+            // Миграция flip (знак +): flip ползёт вверх → цена идёт за ним. Норм. на σ сессии.
+            if (memory.FlipMigrationUsd is { } fm && safeSigma > 0)
+            {
+                double vote = SessionAnalysisMath.Clamp(Math.Tanh(fm / safeSigma), -1, 1);
+                if (Math.Abs(vote) >= MemorySignalEpsilon)
+                    components.Add(new BiasComponent
+                {
+                    Name = "Миграция flip",
+                    RawValue = fm,
+                    Normalized = vote,
+                    Weight = WeightFlipMigration,
+                    Explanation = $"gamma-flip за 24ч сместился на {fm.ToString("+#,##0;-#,##0", CultureInfo.InvariantCulture)} " +
+                                  $"→ {(vote >= 0 ? "вверх" : "вниз")} (цена идёт за flip)."
+                });
+            }
+
+            // Поток OI на стенах (знак −): набор PUT-стены (поддержка) → вверх, CALL-стены → вниз.
+            if (memory.WallFlowOi is { } wf && totalOi > 0)
+            {
+                double vote = SessionAnalysisMath.Clamp(-Math.Tanh(wf / (WallFlowOiScale * totalOi)), -1, 1);
+                if (Math.Abs(vote) >= MemorySignalEpsilon)
+                    components.Add(new BiasComponent
+                {
+                    Name = "Поток OI на стенах",
+                    RawValue = wf,
+                    Normalized = vote,
+                    Weight = WeightWallFlow,
+                    Explanation = $"за 24ч набор OI {(wf < 0 ? "на PUT-стене (поддержка крепнет)" : "на CALL-стене (сопротивление крепнет)")} " +
+                                  $"→ {(vote >= 0 ? "вверх" : "вниз")}."
+                });
+            }
+
+            // Тренд Net GEX (знак +): рост Net GEX у спота → стабилизация/поддержка. Норм. на пик профиля.
+            if (memory.NetGexChange is { } ng && profilePeak > 0)
+            {
+                double vote = SessionAnalysisMath.Clamp(Math.Tanh(ng / profilePeak), -1, 1);
+                if (Math.Abs(vote) >= MemorySignalEpsilon)
+                    components.Add(new BiasComponent
+                {
+                    Name = "Тренд Net GEX",
+                    RawValue = ng,
+                    Normalized = vote,
+                    Weight = WeightNetGexTrend,
+                    Explanation = $"Net GEX у спота за 24ч {(ng >= 0 ? "вырос" : "упал")} → {(vote >= 0 ? "вверх" : "вниз")}."
+                });
+            }
+
+            // Положение в реализованном диапазоне (знак +): моментум — вверху диапазона → вверх.
+            if (memory.HasHistory)
+            {
+                double vote = SessionAnalysisMath.Clamp(2.0 * memory.RangePosition - 1.0, -1, 1);
+                components.Add(new BiasComponent
+                {
+                    Name = "Позиция в диапазоне",
+                    RawValue = memory.RangePosition,
+                    Normalized = vote,
+                    Weight = WeightRangePosition,
+                    Explanation = $"спот в {(memory.RangePosition * 100):0}% реализованного диапазона " +
+                                  $"({Fmt(memory.RealizedLow)}…{Fmt(memory.RealizedHigh)}) → {(vote >= 0 ? "вверх" : "вниз")} (моментум)."
+                });
+            }
         }
 
         double weightSum = components.Sum(c => c.Weight);

@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Option.Data.Database;
+using Option.Data.Shared.Dto;
 using Option.Data.Shared.Poco;
 using Option.Data.Ui.Models;
 using Option.Data.Ui.Services;
@@ -32,6 +33,12 @@ using Option.Data.Ui.Services;
 
 const double FillWindowHours = 24;   // жизнь отложенного входа (фейд из середины)
 const double FeePerSide = 0.0005;    // Deribit perp taker 0.05%
+const int RangeLookback = 240;       // ~30 дней (8 срезов/день) — скользящее окно реализованного диапазона / перцентиля OI
+
+// --- Параметры тестируемого ФИКСА (flip-aware стоп/вход), применяются только в режимах FLIPSTOP/FLIPENTRY ---
+const double FlipBufferSig = 0.3;       // буфер стопа/входа за flip, σ сессии
+const double FlipEntryMinSig = 1.0;     // отложенный вход к flip включается, если flip ≥ этого числа σ в сторону отскока
+const double FlipEntryFillHours = 96;   // жизнь отложенного входа к flip (ждём возврата к flip до 4 дней)
 
 Console.OutputEncoding = Encoding.UTF8;
 CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
@@ -46,9 +53,15 @@ Console.WriteLine($"Тайм-стоп позиции: {TimeStopHours:0} ч");
 // ALT (3-й аргумент): эмуляция ПРЕДЛОЖЕННЫХ целей импульса/направленных — вместо σ-границ
 // КВАРТАЛЬНОГО горизонта кандидатами становятся spot ∓ 1.5/2.5 σ СЕССИИ (стена и пин остаются).
 // Боевой код не меняется — цель пересчитывается поверх готовой рекомендации тем же фильтром PickTarget.
-bool altTargets = args.Length > 2 && args[2].ToUpperInvariant() == "ALT";
-if (altTargets)
-    Console.WriteLine("Режим ALT: цели импульса/направленных — стена/пин/spot∓1.5σ/2.5σ сессии (вместо σ-границ горизонта)");
+string mode = args.Length > 2 ? args[2].ToUpperInvariant() : "BASE";
+bool altTargets = mode == "ALT";
+Console.WriteLine(mode switch
+{
+    "ALT" => "Режим ALT: цели импульса/направленных — стена/пин/spot∓1.5σ/2.5σ сессии (вместо σ-границ горизонта)",
+    "FLIPSTOP" => "Режим FLIPSTOP: стоп импульса/направленных переносится ЗА gamma-flip, если flip в зоне отскока за стопом (фикс-тест)",
+    "FLIPENTRY" => $"Режим FLIPENTRY: импульс/направленная с flip ≥ {FlipEntryMinSig:0.#}σ в сторону отскока → ОТЛОЖЕННЫЙ вход к flip, стоп за flip, цель прежняя (фикс-тест)",
+    _ => "Режим BASE: боевая логика без изменений"
+});
 
 string root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 string appsettingsPath = Path.Combine(root, "Option.Data.Ui", "appsettings.json");
@@ -60,6 +73,7 @@ var dbOptions = new DbContextOptionsBuilder<ApplicationDbContext>().UseNpgsql(co
 
 var expirationBuilder = new ExpirationAnalysisBuilder();
 var sessionBuilder = new SessionRecommendationBuilder();
+var memoryBuilder = new ContractMemoryBuilder();
 
 var combined = new List<(string Symbol, List<TradeRec> Trades)>();
 
@@ -98,6 +112,64 @@ foreach (string symbol in symbols)
         agg.Oi += d.OpenInterest;
     }
 
+    // Глобальный прокси спота по снимку: max форвард среди ВСЕХ экспираций
+    // (стабильный «цена базового актива во времени» для реализованного диапазона и моментума —
+    //  НАБЛЮДАТЕЛЬНО, в торговую логику не входит).
+    double[] spotAt = new double[times.Count];
+    for (int k = 0; k < times.Count; k++)
+    {
+        double mx = double.MinValue;
+        foreach (ExpAgg a in perExp[times[k]].Values)
+            mx = Math.Max(mx, a.Px);
+        spotAt[k] = mx;
+    }
+
+    // Фичи «памяти контракта» на момент входа (только данные ≤ i — без подглядывания).
+    MemFeat ComputeFeat(int i, double entry, int dir, double? flipPx, double? targetWall, double stop, double sigma, List<string> win)
+    {
+        // Реализованный диапазон по СКОЛЬЗЯЩЕМУ окну ~30 дней (не since-inception:
+        // на годовом тренде since-inception вырождается — цена всегда у дна/вершины).
+        double lo = double.MaxValue, hi = double.MinValue;
+        for (int k = Math.Max(0, i - RangeLookback + 1); k <= i; k++) { lo = Math.Min(lo, spotAt[k]); hi = Math.Max(hi, spotAt[k]); }
+        double rangePos = hi > lo ? SessionAnalysisMath.Clamp((entry - lo) / (hi - lo), 0, 1) : 0.5;
+
+        // Краткосрочный моментум: откат вверх от мин. и просадка от макс. за последние 8 срезов (~24ч).
+        int j0 = Math.Max(0, i - 7);
+        double lo8 = double.MaxValue, hi8 = double.MinValue;
+        for (int k = j0; k <= i; k++) { lo8 = Math.Min(lo8, spotAt[k]); hi8 = Math.Max(hi8, spotAt[k]); }
+        double runupLow8 = lo8 > 0 ? (entry - lo8) / lo8 * 100.0 : 0;
+        double ddHigh8 = hi8 > 0 ? (hi8 - entry) / hi8 * 100.0 : 0;
+
+        // Положение flip ОТНОСИТЕЛЬНО сделки (against = направление отскока против позиции).
+        // flipHeadroom>0  — flip в стороне отскока (есть куда откатиться против нас);
+        // flipBeyondStop>0 — flip ДАЛЬШЕ стопа в стороне отскока ⇒ стоп сидит ВНУТРИ зоны отскока к flip.
+        double s = sigma > 0 && double.IsFinite(sigma) ? sigma : entry * 0.01;
+        double flipHeadroom = flipPx is { } f && double.IsFinite(f) ? (f - entry) * -dir / s : 0;
+        double flipBeyondStop = flipPx is { } f2 && double.IsFinite(f2) ? (f2 - stop) * -dir / s : 0;
+
+        // Близость к структурной стене в СТОРОНЕ ЦЕЛИ (−γ-пол для шорта / потолок для лонга): мало ⇒ истощение.
+        // dir·(стена−вход): для шорта (dir=−1, стена ниже) = (вход−стена)/вход·100 > 0; для лонга — (стена−вход)/вход·100 > 0.
+        double distTargetWall = targetWall is { } w2 && double.IsFinite(w2) && w2 > 0
+            ? (w2 - entry) * dir / entry * 100.0
+            : double.NaN;
+
+        // Репрезентативность OI: перцентиль текущего OI окна среди собственной истории окна.
+        double curOi = 0;
+        foreach (string e in win) if (perExp[times[i]].TryGetValue(e, out ExpAgg? a)) curOi += a.Oi;
+        int below = 0, tot = 0;
+        for (int k = Math.Max(0, i - RangeLookback + 1); k <= i; k++)
+        {
+            double o = 0; bool any = false;
+            foreach (string e in win) if (perExp[times[k]].TryGetValue(e, out ExpAgg? a)) { o += a.Oi; any = true; }
+            if (!any) continue;
+            tot++;
+            if (o <= curOi) below++;
+        }
+        double oiPctile = tot > 0 ? 100.0 * below / tot : 50.0;
+
+        return new MemFeat(rangePos, runupLow8, ddHigh8, flipHeadroom, flipBeyondStop, distTargetWall, oiPctile);
+    }
+
     // Цена в конвенции страницы: max форвард по окну (окно фиксируется при входе).
     double PriceAt(DateTimeOffset t, List<string> window)
     {
@@ -110,6 +182,50 @@ foreach (string symbol in symbols)
             foreach (ExpAgg a in dict.Values)
                 px = Math.Max(px, a.Px);
         return px;
+    }
+
+    // История срезов окна (последние ~170 ≈ 21 день) для «памяти контракта» — без look-ahead (≤ iNow).
+    List<MemorySnapshot> BuildMemHistory(int iNow, List<string> win)
+    {
+        var snaps = new List<MemorySnapshot>();
+        var winSet = new HashSet<string>(win);
+        int fromK = Math.Max(0, iNow - 169);
+        for (int k = fromK; k <= iNow; k++)
+        {
+            if (!rowsAt.TryGetValue(times[k], out List<DeribitData>? rk)) continue;
+            List<DeribitData> winRows = rk.Where(r => winSet.Contains(r.Expiration)).ToList();
+            if (winRows.Count == 0) continue;
+            double spot = winRows.Max(r => r.UnderlyingPrice);
+            if (spot <= 0 || !double.IsFinite(spot)) continue;
+
+            var gs = new List<SessionAnalysisMath.GammaStrike>();
+            foreach (IGrouping<string, DeribitData> expG in winRows.GroupBy(r => r.Expiration))
+            {
+                double tt = OptionExposureMath.YearsToExpiry(expG.Key, times[k]);
+                if (tt <= 0) continue;
+                foreach (IGrouping<int, DeribitData> kG in expG.GroupBy(r => r.Strike))
+                {
+                    double callOi = 0, putOi = 0, callIv = 0, putIv = 0;
+                    foreach (DeribitData r in kG)
+                    {
+                        if (r.OptionTypeId == 1) { callOi += r.OpenInterest; if (r.Iv > 0) callIv = r.Iv; }
+                        else { putOi += r.OpenInterest; if (r.Iv > 0) putIv = r.Iv; }
+                    }
+                    if (callOi <= 0 && putOi <= 0) continue;
+                    gs.Add(new SessionAnalysisMath.GammaStrike(kG.Key, callOi, putOi, (callIv > 0 ? callIv : putIv) / 100.0, tt));
+                }
+            }
+
+            List<OptionData> chain = winRows.GroupBy(r => r.Strike).Select(kG => new OptionData
+            {
+                Strike = kG.Key,
+                CallOi = kG.Where(r => r.OptionTypeId == 1).Sum(r => r.OpenInterest),
+                PutOi = kG.Where(r => r.OptionTypeId == 2).Sum(r => r.OpenInterest)
+            }).OrderBy(o => o.Strike).ToList();
+
+            snaps.Add(new MemorySnapshot(times[k], spot, gs, chain));
+        }
+        return snaps;
     }
 
     var trades = new List<TradeRec>();
@@ -127,7 +243,7 @@ foreach (string symbol in symbols)
         double feeR = (ps.Entry + exit) * FeePerSide / risk;
         trades.Add(new TradeRec(ps.OpenTime, closeT, ps.Type, ps.Conditional, ps.Dir,
             ps.Entry, ps.Stop, ps.Target, exit, outcome,
-            r, r - feeR, ps.Dir * (exit - ps.Entry) / ps.Entry * 100.0, ps.PlannedRR, ps.Bias));
+            r, r - feeR, ps.Dir * (exit - ps.Entry) / ps.Entry * 100.0, ps.PlannedRR, ps.Bias, ps.Feat));
     }
 
     for (int i = 0; i < times.Count; i++)
@@ -182,7 +298,7 @@ foreach (string symbol in symbols)
                 {
                     Dir = pend.Dir, Entry = pend.Limit, Stop = pend.Stop, Target = pend.Target,
                     OpenTime = t, Window = pend.Window, Type = pend.Type, Conditional = true,
-                    PlannedRR = pend.PlannedRR, Bias = pend.Bias
+                    PlannedRR = pend.PlannedRR, Bias = pend.Bias, Feat = pend.Feat
                 };
                 Record(psFill, t, pend.Stop, "FILL+STOP");
                 pend = null;
@@ -195,12 +311,12 @@ foreach (string symbol in symbols)
                 {
                     Dir = pend.Dir, Entry = pend.Limit, Stop = pend.Stop, Target = pend.Target,
                     OpenTime = t, Window = pend.Window, Type = pend.Type, Conditional = true,
-                    PlannedRR = pend.PlannedRR, Bias = pend.Bias
+                    PlannedRR = pend.PlannedRR, Bias = pend.Bias, Feat = pend.Feat
                 };
                 pend = null;
                 continue;
             }
-            if ((t - pend.Placed).TotalHours >= FillWindowHours)
+            if ((t - pend.Placed).TotalHours >= pend.FillHours)
             {
                 pendingCancelled++;
                 pend = null;   // отмена — на этом же срезе строим новую рекомендацию (ниже)
@@ -247,7 +363,17 @@ foreach (string symbol in symbols)
         {
             List<ExpirationAnalysis> analyses = expirationBuilder.Build(rowsAt[t], w, t);
             if (analyses.Count == 0) { skipped++; continue; }
-            rec = sessionBuilder.BuildAggregate(analyses, symbol, t, flow);
+
+            // «Память контракта» по окну w (история ≤ t). curOi — ΣOI окна на срезе; maxOi — макс. среди всех серий.
+            double curOiMem = 0, maxOiMem = 0;
+            foreach (KeyValuePair<string, ExpAgg> kv in dictNow)
+            {
+                if (w.Contains(kv.Key)) curOiMem += kv.Value.Oi;
+                if (kv.Value.Oi > maxOiMem) maxOiMem = kv.Value.Oi;
+            }
+            ContractMemory mem = memoryBuilder.Build(BuildMemHistory(i, w), curOiMem, maxOiMem);
+
+            rec = sessionBuilder.BuildAggregate(analyses, symbol, t, flow, mem);
             recBuilt++;
         }
         catch
@@ -270,6 +396,12 @@ foreach (string symbol in symbols)
         }
 
         int dir = pt.Side == TradeSide.Short ? -1 : +1;
+
+        // Наблюдательные фичи памяти на момент входа (стена в сторону цели: −γ-пол/потолок).
+        double? putWallPx = rec.Levels.FirstOrDefault(l => l.Kind == LevelKind.PutWall)?.Price;
+        double? callWallPx = rec.Levels.FirstOrDefault(l => l.Kind == LevelKind.CallWall)?.Price;
+        double? targetWall = dir < 0 ? putWallPx : callWallPx;
+        double sigForFeat = rec.Range.SessionSigmaUsd;
 
         // ALT: пересчёт цели импульса/направленной по сессионным кандидатам (фейд не трогаем).
         if (altTargets && pt.Action is TradeAction.Breakout or TradeAction.Directional)
@@ -299,13 +431,46 @@ foreach (string symbol in symbols)
             if (best <= 0) { standAside++; continue; }   // нет цели → вне рынка (как в проде)
             target0 = best;
         }
+        // origStop — боевой стоп до возможного переноса (фичи памяти считаем по нему, чтобы бакеты
+        // были сопоставимы между режимами BASE/FLIPSTOP/FLIPENTRY).
+        double origStop = stop0;
+
+        // FLIPSTOP (фикс-тест): перенос стопа ЗА flip, если flip — в сторонe отскока И дальше текущего стопа.
+        if (mode == "FLIPSTOP" && pt.Action is TradeAction.Breakout or TradeAction.Directional &&
+            rec.GammaFlip is { } gfS && double.IsFinite(gfS) &&
+            (dir < 0 ? gfS > rec.Spot && gfS > stop0 : gfS < rec.Spot && gfS < stop0))
+        {
+            double sSig = rec.Range.SessionSigmaUsd;
+            stop0 = dir < 0 ? gfS + FlipBufferSig * sSig : gfS - FlipBufferSig * sSig;
+        }
+
         if (pt.Action == TradeAction.FadeRange && pt.IsConditional)
         {
+            double limit = (el + eh) / 2.0;
             pend = new Pending
             {
-                Dir = dir, Limit = (el + eh) / 2.0, Stop = stop0, Target = target0,
+                Dir = dir, Limit = limit, Stop = stop0, Target = target0,
                 Placed = t, Window = w, Type = pt.Action.ToString(),
-                PlannedRR = pt.RiskReward ?? 0, Bias = rec.BiasScore
+                PlannedRR = pt.RiskReward ?? 0, Bias = rec.BiasScore, FillHours = FillWindowHours,
+                Feat = ComputeFeat(i, limit, dir, rec.GammaFlip, targetWall, origStop, sigForFeat, w)
+            };
+            pendingPlaced++;
+        }
+        else if (mode == "FLIPENTRY" && pt.Action is TradeAction.Breakout or TradeAction.Directional &&
+                 rec.GammaFlip is { } gfE && double.IsFinite(gfE) &&
+                 (dir < 0 ? gfE > rec.Spot : gfE < rec.Spot) &&
+                 Math.Abs(gfE - rec.Spot) >= FlipEntryMinSig * rec.Range.SessionSigmaUsd)
+        {
+            // Отложенный вход к flip: вход у flip (на возврате против хода), стоп за flip, цель — исходная.
+            double sSig = rec.Range.SessionSigmaUsd;
+            double limit = dir < 0 ? gfE - FlipBufferSig * sSig : gfE + FlipBufferSig * sSig;
+            double fstop = dir < 0 ? gfE + FlipBufferSig * sSig : gfE - FlipBufferSig * sSig;
+            pend = new Pending
+            {
+                Dir = dir, Limit = limit, Stop = fstop, Target = target0,
+                Placed = t, Window = w, Type = pt.Action.ToString(),
+                PlannedRR = pt.RiskReward ?? 0, Bias = rec.BiasScore, FillHours = FlipEntryFillHours,
+                Feat = ComputeFeat(i, limit, dir, rec.GammaFlip, targetWall, origStop, sigForFeat, w)
             };
             pendingPlaced++;
         }
@@ -315,7 +480,8 @@ foreach (string symbol in symbols)
             {
                 Dir = dir, Entry = rec.Spot, Stop = stop0, Target = target0,
                 OpenTime = t, Window = w, Type = pt.Action.ToString(), Conditional = false,
-                PlannedRR = pt.RiskReward ?? 0, Bias = rec.BiasScore
+                PlannedRR = pt.RiskReward ?? 0, Bias = rec.BiasScore,
+                Feat = ComputeFeat(i, rec.Spot, dir, rec.GammaFlip, targetWall, origStop, sigForFeat, w)
             };
         }
     }
@@ -401,9 +567,11 @@ foreach (string symbol in symbols)
     // CSV для ручной проверки
     string csvSuffix = Math.Abs(TimeStopHours - 120) < 1e-9 ? "" : $"_T{TimeStopHours:0}h";
     if (altTargets) csvSuffix += "_ALT";
+    if (mode is "FLIPSTOP" or "FLIPENTRY") csvSuffix += "_" + mode;
     string csvPath = Path.Combine(root, "tradebacktest", $"trades_{symbol}{csvSuffix}.csv");
     var sb = new StringBuilder();
-    sb.AppendLine("open,close,holdHours,type,conditional,side,entry,stop,target,exit,outcome,R,RNet,retPct,plannedRR,bias");
+    sb.AppendLine("open,close,holdHours,type,conditional,side,entry,stop,target,exit,outcome,R,RNet,retPct,plannedRR,bias," +
+                  "rangePos,runupLow8,ddHigh8,flipHeadroom,flipBeyondStop,distTargetWallPct,oiPctile");
     foreach (TradeRec x in trades)
         sb.AppendLine(string.Join(",",
             x.OpenTime.ToString("yyyy-MM-dd HH:mm"), x.CloseTime.ToString("yyyy-MM-dd HH:mm"),
@@ -411,10 +579,58 @@ foreach (string symbol in symbols)
             x.Type, x.Conditional ? "Y" : "N", x.Dir < 0 ? "SHORT" : "LONG",
             x.Entry.ToString("0.00"), x.Stop.ToString("0.00"), x.Target.ToString("0.00"), x.Exit.ToString("0.00"),
             x.Outcome, x.R.ToString("0.000"), x.RNet.ToString("0.000"), x.RetPct.ToString("0.000"),
-            x.PlannedRR.ToString("0.00"), x.Bias.ToString("0.000")));
+            x.PlannedRR.ToString("0.00"), x.Bias.ToString("0.000"),
+            x.Feat.RangePos.ToString("0.000"), x.Feat.RunupLow8.ToString("0.00"), x.Feat.DdHigh8.ToString("0.00"),
+            x.Feat.FlipHeadroom.ToString("0.00"), x.Feat.FlipBeyondStop.ToString("0.00"),
+            x.Feat.DistTargetWallPct.ToString("0.00"), x.Feat.OiPctile.ToString("0.0")));
     File.WriteAllText(csvPath, sb.ToString(), Encoding.UTF8);
     Console.WriteLine($"Журнал сделок: {csvPath}");
     Console.WriteLine($"Двусмысленных баров (стоп+цель за один бар, засчитан стоп): {ambiguousBars}");
+    Console.WriteLine();
+
+    // ======================  АНАЛИЗ «ПАМЯТИ» (наблюдательно)  ======================
+    void Stat(string label, List<TradeRec> g)
+    {
+        if (g.Count == 0) { Console.WriteLine($"  {label,-44} n=  0"); return; }
+        int w1 = g.Count(x => x.Outcome == "TARGET");
+        int s1 = g.Count(x => x.Outcome is "STOP" or "STOP*" or "FILL+STOP");
+        double wr = w1 + s1 > 0 ? 100.0 * w1 / (w1 + s1) : 0;
+        Console.WriteLine($"  {label,-44} n={g.Count,4}  win {wr,5:0.0}%  ΣRnet {g.Sum(x => x.RNet),8:+0.00;-0.00}  ср.R {g.Average(x => x.RNet),7:+0.000;-0.000}");
+    }
+
+    var impulse = trades.Where(x => x.Type is "Breakout" or "Directional").ToList();
+    var imShort = impulse.Where(x => x.Dir < 0).ToList();
+    Console.WriteLine($"=== АНАЛИЗ ПАМЯТИ ({symbol}): импульсных {impulse.Count} (из них шортов {imShort.Count}) ===");
+
+    Console.WriteLine("[A] импульсные ШОРТЫ — положение flip относительно стопа (flipBeyondStop>0 ⇒ стоп ВНУТРИ зоны отскока к flip):");
+    Stat("flipBeyondStop ≤ 0 (стоп за/у flip)", imShort.Where(x => x.Feat.FlipBeyondStop <= 0).ToList());
+    Stat("flipBeyondStop 0..1σ", imShort.Where(x => x.Feat.FlipBeyondStop > 0 && x.Feat.FlipBeyondStop <= 1).ToList());
+    Stat("flipBeyondStop > 1σ (стоп глубоко в зоне отскока)", imShort.Where(x => x.Feat.FlipBeyondStop > 1).ToList());
+
+    Console.WriteLine("[A2] импульсные ШОРТЫ — глубина входа под flip (flipHeadroom = σ вверх до flip; больше = глубже в −γ):");
+    Stat("flipHeadroom < 1σ (вход у/над flip)", imShort.Where(x => x.Feat.FlipHeadroom < 1).ToList());
+    Stat("flipHeadroom 1..2.5σ", imShort.Where(x => x.Feat.FlipHeadroom >= 1 && x.Feat.FlipHeadroom < 2.5).ToList());
+    Stat("flipHeadroom ≥ 2.5σ (глубоко под flip)", imShort.Where(x => x.Feat.FlipHeadroom >= 2.5).ToList());
+
+    Console.WriteLine("[B] импульсные ШОРТЫ — положение входа в реализованном диапазоне (низ = вход у дна):");
+    Stat("rangePos < 0.33 (у дна)", imShort.Where(x => x.Feat.RangePos < 0.33).ToList());
+    Stat("rangePos 0.33..0.66 (середина)", imShort.Where(x => x.Feat.RangePos >= 0.33 && x.Feat.RangePos < 0.66).ToList());
+    Stat("rangePos ≥ 0.66 (у верха, после отката)", imShort.Where(x => x.Feat.RangePos >= 0.66).ToList());
+
+    Console.WriteLine("[C] импульсные ШОРТЫ — откат вверх за ~24ч (высокий = шорт в незавершённый отскок):");
+    Stat("runupLow8 < 1%", imShort.Where(x => x.Feat.RunupLow8 < 1).ToList());
+    Stat("runupLow8 1..4%", imShort.Where(x => x.Feat.RunupLow8 >= 1 && x.Feat.RunupLow8 < 4).ToList());
+    Stat("runupLow8 ≥ 4% (свежий отскок)", imShort.Where(x => x.Feat.RunupLow8 >= 4).ToList());
+
+    Console.WriteLine("[D] импульсные ШОРТЫ — близость к −γ-полу в сторону цели (мало = истощение у стены):");
+    Stat("distTargetWall < 3%", imShort.Where(x => !double.IsNaN(x.Feat.DistTargetWallPct) && x.Feat.DistTargetWallPct < 3).ToList());
+    Stat("distTargetWall 3..7%", imShort.Where(x => !double.IsNaN(x.Feat.DistTargetWallPct) && x.Feat.DistTargetWallPct >= 3 && x.Feat.DistTargetWallPct < 7).ToList());
+    Stat("distTargetWall ≥ 7%", imShort.Where(x => !double.IsNaN(x.Feat.DistTargetWallPct) && x.Feat.DistTargetWallPct >= 7).ToList());
+
+    Console.WriteLine("[E] ВСЕ сделки — репрезентативность OI (перцентиль текущего OI окна среди истории):");
+    Stat("oiPctile < 33 (низкий OI)", trades.Where(x => x.Feat.OiPctile < 33).ToList());
+    Stat("oiPctile 33..66", trades.Where(x => x.Feat.OiPctile >= 33 && x.Feat.OiPctile < 66).ToList());
+    Stat("oiPctile ≥ 66 (высокий OI)", trades.Where(x => x.Feat.OiPctile >= 66).ToList());
     Console.WriteLine();
 
     combined.Add((symbol, trades));
@@ -451,6 +667,7 @@ internal class Position
     public bool Conditional;
     public double PlannedRR;
     public double Bias;
+    public MemFeat Feat;
 }
 
 internal class Pending
@@ -462,9 +679,21 @@ internal class Pending
     public string Type = "";
     public double PlannedRR;
     public double Bias;
+    public MemFeat Feat;
+    public double FillHours;
 }
 
 internal record TradeRec(
     DateTimeOffset OpenTime, DateTimeOffset CloseTime, string Type, bool Conditional, int Dir,
     double Entry, double Stop, double Target, double Exit, string Outcome,
-    double R, double RNet, double RetPct, double PlannedRR, double Bias);
+    double R, double RNet, double RetPct, double PlannedRR, double Bias, MemFeat Feat);
+
+/// <summary>Наблюдательные фичи «памяти контракта» на момент входа (в торговую логику НЕ входят).</summary>
+internal readonly record struct MemFeat(
+    double RangePos,         // положение входа в реализованном диапазоне 0..1 (0 — у low, 1 — у high)
+    double RunupLow8,        // % отскока вверх от мин. за ~24ч (для шорта: высокий = вход в незавершённый отскок)
+    double DdHigh8,          // % просадки от макс. за ~24ч
+    double FlipHeadroom,     // σ до flip в сторону отскока против позиции (>0 — есть куда откатиться против нас)
+    double FlipBeyondStop,   // σ, на сколько flip ДАЛЬШЕ стопа в сторону отскока (>0 — стоп внутри зоны отскока к flip)
+    double DistTargetWallPct,// % от входа до структурной стены в сторону цели (мало — истощение у стены)
+    double OiPctile);        // перцентиль текущего OI окна среди собственной истории (мало — нерепрезентативно)

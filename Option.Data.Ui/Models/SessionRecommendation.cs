@@ -55,6 +55,9 @@ public class SessionRecommendation
     public List<GammaProfilePoint> GammaProfile { get; set; } = new();
     public List<string> Notes { get; set; } = new();           // предупреждения/краевые случаи (внутреннее, не рендерится)
     public List<OptionData> FrontChain { get; set; } = new();  // для сворачиваемого блока HtmlBuilder
+
+    /// <summary>Память контракта (история экспирации/окна): контекст + сырые фичи сигналов памяти. null — память не строилась.</summary>
+    public ContractMemory? Memory { get; set; }
 }
 
 public class SessionRange
@@ -123,6 +126,15 @@ public class PrimaryTrade
     public List<string> Drivers { get; set; } = new(); // топ 1-2 драйвера
     public string PlanB { get; set; } = "";            // одна строка плана-Б
     public string Setup { get; set; } = "";            // для StandAside: условие появления сетапа
+
+    /// <summary>Риск-заметка: стоп внутри зоны вероятного отскока к gamma-flip (информирует, не переопределяет).</summary>
+    public string RiskNote { get; set; } = "";
+    /// <summary>Опц. консервативный вход к flip (показывается только при StopInsideBounceZone).</summary>
+    public double? ConservativeEntry { get; set; }
+    public double? ConservativeStop { get; set; }
+    public double? ConservativeRiskReward { get; set; }
+    /// <summary>Заметка об уверенности (низкая репрезентативность OI тонкой одиночной серии).</summary>
+    public string ConfidenceNote { get; set; } = "";
 }
 
 /// <summary>

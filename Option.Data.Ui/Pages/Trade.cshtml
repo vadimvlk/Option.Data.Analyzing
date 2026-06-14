@@ -336,6 +336,18 @@
                 {
                     <p class="mb-0"><small class="text-muted"><strong>План-Б:</strong> @pt.PlanB</small></p>
                 }
+                @if (!string.IsNullOrEmpty(pt.RiskNote))
+                {
+                    <p class="mb-1 mt-2"><small class="text-warning">⚠ <strong>Риск (память):</strong> @pt.RiskNote</small></p>
+                }
+                @if (pt.ConservativeEntry is { } ce)
+                {
+                    <p class="mb-1"><small class="text-muted"><strong>Консервативный вход к flip:</strong> @ce.ToString("N2") · стоп @pt.ConservativeStop!.Value.ToString("N2") · R:R @pt.ConservativeRiskReward!.Value.ToString("0.00") <em>(выше win-rate; может не исполниться — цена должна вернуться к flip)</em></small></p>
+                }
+                @if (!string.IsNullOrEmpty(pt.ConfidenceNote))
+                {
+                    <p class="mb-0"><small class="text-muted"><strong>Уверенность:</strong> @pt.ConfidenceNote</small></p>
+                }
             }
         </article>
 
@@ -416,6 +428,35 @@
                 </details>
             }
         </article>
+
+        <!-- ================= 1b. КОНТЕКСТ ПО ЭКСПИРАЦИИ (ПАМЯТЬ) ================= -->
+        @if (rec.Memory is { HasHistory: true } mem)
+        {
+            <article class="mb-4">
+                <header>
+                    <strong>Контекст по экспирации (память)</strong>
+                    <small class="text-muted">@mem.SnapshotCount срезов, @mem.FirstSeen.ToString("dd.MM")–@mem.LastSeen.ToString("dd.MM")</small>
+                </header>
+                <div class="grid">
+                    <div>
+                        <strong>Реализованный диапазон:</strong><br/>
+                        <span class="text-danger">@mem.RealizedLow.ToString("N0")</span> (@mem.RealizedLowAt.ToString("dd.MM")) …
+                        <span class="text-success">@mem.RealizedHigh.ToString("N0")</span> (@mem.RealizedHighAt.ToString("dd.MM"))<br/>
+                        Спот в <strong>@((mem.RangePosition * 100).ToString("0"))%</strong> диапазона@(mem.FlipDepthSigmas is { } fd ? $" · глубина под flip {fd.ToString("+0.0;-0.0")}σ" : "")
+                    </div>
+                    <div>
+                        <strong>На минимуме</strong> (@mem.RealizedLowAt.ToString("dd.MM")): Net GEX @mem.NetGexAtLow.ToString("N0"), OI @mem.OiAtLow.ToString("N0")<br/>
+                        <strong>На максимуме</strong> (@mem.RealizedHighAt.ToString("dd.MM")): Net GEX @mem.NetGexAtHigh.ToString("N0"), OI @mem.OiAtHigh.ToString("N0")
+                    </div>
+                </div>
+                <small class="text-muted d-block mt-1">
+                    Миграция gamma-flip за 24ч: @(mem.FlipMigrationUsd is { } fm ? fm.ToString("+0;-0") : "—") ·
+                    поток OI за 24ч: CALL-стена @(mem.CallWallOiFlow is { } cwf ? cwf.ToString("+0;-0") : "—"), PUT-стена @(mem.PutWallOiFlow is { } pwf ? pwf.ToString("+0;-0") : "—") ·
+                    Δ Net GEX за 24ч @(mem.NetGexChange is { } ngc ? ngc.ToString("+0;-0") : "—") ·
+                    OI серии @((mem.OiRepresentativeness * 100).ToString("0"))% от самой ликвидной@(mem.IsThin ? " — тонкая серия, ниже уверенность" : "")
+                </small>
+            </article>
+        }
 
         <div class="grid">
             <!-- ================= 2/3. КАРТА УРОВНЕЙ + СПИСОК ================= -->

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Option.Data.Database;
+using Option.Data.Shared.Dto;
 using Option.Data.Shared.Poco;
 using Option.Data.Ui.Models;
 using Option.Data.Ui.Services;
@@ -45,6 +46,54 @@ List<string> expirations = rows
     .ToList();
 
 List<string> aggWindow = QuarterlyAggregation.WindowExpirations(expirations, asOf);
+
+// Макс. ΣOI среди всех серий снимка (для репрезентативности OI памяти) + общий построитель памяти.
+double maxOiAll = rows.GroupBy(r => r.Expiration).Select(g => g.Sum(r => r.OpenInterest)).DefaultIfEmpty(0).Max();
+var memoryBuilder = new ContractMemoryBuilder();
+
+// История срезов (последние ~170) выбранных серий для «памяти контракта» (≤ until).
+List<MemorySnapshot> MemHistory(List<DeribitData> srcRows, DateTimeOffset until)
+{
+    List<IGrouping<DateTimeOffset, DeribitData>> byTime = srcRows
+        .Where(r => r.CreatedAt <= until)
+        .GroupBy(r => r.CreatedAt)
+        .OrderBy(g => g.Key)
+        .ToList();
+    int fromG = Math.Max(0, byTime.Count - 170);
+    var snaps = new List<MemorySnapshot>();
+    for (int gi = fromG; gi < byTime.Count; gi++)
+    {
+        IGrouping<DateTimeOffset, DeribitData> snap = byTime[gi];
+        double spot = snap.Max(r => r.UnderlyingPrice);
+        if (spot <= 0 || !double.IsFinite(spot)) continue;
+
+        var gs = new List<SessionAnalysisMath.GammaStrike>();
+        foreach (IGrouping<string, DeribitData> expG in snap.GroupBy(r => r.Expiration))
+        {
+            double tt = OptionExposureMath.YearsToExpiry(expG.Key, snap.Key);
+            if (tt <= 0) continue;
+            foreach (IGrouping<int, DeribitData> kG in expG.GroupBy(r => r.Strike))
+            {
+                double callOi = 0, putOi = 0, callIv = 0, putIv = 0;
+                foreach (DeribitData r in kG)
+                {
+                    if (r.OptionTypeId == 1) { callOi += r.OpenInterest; if (r.Iv > 0) callIv = r.Iv; }
+                    else { putOi += r.OpenInterest; if (r.Iv > 0) putIv = r.Iv; }
+                }
+                if (callOi <= 0 && putOi <= 0) continue;
+                gs.Add(new SessionAnalysisMath.GammaStrike(kG.Key, callOi, putOi, (callIv > 0 ? callIv : putIv) / 100.0, tt));
+            }
+        }
+        List<OptionData> chain = snap.GroupBy(r => r.Strike).Select(kG => new OptionData
+        {
+            Strike = kG.Key,
+            CallOi = kG.Where(r => r.OptionTypeId == 1).Sum(r => r.OpenInterest),
+            PutOi = kG.Where(r => r.OptionTypeId == 2).Sum(r => r.OpenInterest)
+        }).OrderBy(o => o.Strike).ToList();
+        snaps.Add(new MemorySnapshot(snap.Key, spot, gs, chain));
+    }
+    return snaps;
+}
 
 // ===== Смоук-режим ALL: все экспирации снимка + «Сводка», по строке на план =====
 if (singleExp == "ALL")
@@ -115,13 +164,17 @@ if (singleExp == "ALL")
             Console.WriteLine($"{e,-8} {dte,6:0.0}д | нет данных");
             continue;
         }
-        SessionRecommendation r1 = sessB.Build(an, symbol, asOf, SessionAnalysisMath.DexTrend(SeriesFor([e])));
+        double curOiE = rows.Where(r => r.Expiration == e).Sum(r => r.OpenInterest);
+        ContractMemory memE = memoryBuilder.Build(MemHistory(allRows.Where(d => d.Expiration == e).ToList(), asOf), curOiE, maxOiAll);
+        SessionRecommendation r1 = sessB.Build(an, symbol, asOf, SessionAnalysisMath.DexTrend(SeriesFor([e])), memE);
         Console.WriteLine($"{e,-8} {dte,6:0.0}д | {PlanLine(r1)}");
     }
 
     List<ExpirationAnalysis> aggAns = expB.Build(rows, aggWindow, asOf);
+    double curOiAgg = rows.Where(r => aggWindow.Contains(r.Expiration)).Sum(r => r.OpenInterest);
+    ContractMemory memAggAll = memoryBuilder.Build(MemHistory(allRows.Where(d => aggWindow.Contains(d.Expiration)).ToList(), asOf), curOiAgg, maxOiAll);
     SessionRecommendation rAgg = sessB.BuildAggregate(aggAns, symbol, asOf,
-        SessionAnalysisMath.DexTrend(SeriesFor(aggWindow)));
+        SessionAnalysisMath.DexTrend(SeriesFor(aggWindow)), memAggAll);
     Console.WriteLine($"{"СВОДКА",-8} {"",7} | {PlanLine(rAgg)}");
     return;
 }
@@ -147,6 +200,10 @@ List<DeltaPoint> deltaSeries = deltaRows
 
 double dexFlowTrend = SessionAnalysisMath.DexTrend(deltaSeries);
 
+// --- память контракта (из тех же deltaRows) ---
+double curOiSel = deltaRows.Where(d => d.CreatedAt == asOf).Sum(d => d.OpenInterest);
+ContractMemory memory = memoryBuilder.Build(MemHistory(deltaRows, asOf), curOiSel, maxOiAll);
+
 // --- боевые билдеры ---
 var expirationBuilder = new ExpirationAnalysisBuilder();
 var sessionBuilder = new SessionRecommendationBuilder();
@@ -155,7 +212,7 @@ List<ExpirationAnalysis>? aggAnalyses = null;
 if (singleExp is null)
 {
     aggAnalyses = expirationBuilder.Build(rows, aggWindow, asOf);
-    rec = sessionBuilder.BuildAggregate(aggAnalyses, symbol, asOf, dexFlowTrend);
+    rec = sessionBuilder.BuildAggregate(aggAnalyses, symbol, asOf, dexFlowTrend, memory);
 }
 else
 {
@@ -165,7 +222,7 @@ else
         Console.WriteLine($"Нет данных по экспирации {singleExp}.");
         return;
     }
-    rec = sessionBuilder.Build(selected, symbol, asOf, dexFlowTrend);
+    rec = sessionBuilder.Build(selected, symbol, asOf, dexFlowTrend, memory);
 }
 
 // =====================  ПЕЧАТЬ  =====================
@@ -207,6 +264,31 @@ if (!string.IsNullOrEmpty(pt.Setup)) Console.WriteLine($"  Сетап: {pt.Setup
 if (!string.IsNullOrEmpty(pt.PlanB)) Console.WriteLine($"  План-Б: {pt.PlanB}");
 if (pt.Drivers.Count > 0) Console.WriteLine($"  Драйверы: {string.Join("; ", pt.Drivers)}");
 if (rec.Notes.Count > 0) Console.WriteLine($"  Заметки: {string.Join(" | ", rec.Notes)}");
+if (!string.IsNullOrEmpty(pt.RiskNote)) Console.WriteLine($"  ⚠ Риск: {pt.RiskNote}");
+if (pt.ConservativeEntry is { } ce)
+    Console.WriteLine($"  Консервативный вход к flip: {F(ce)}  стоп {F(pt.ConservativeStop!.Value)}  R:R {pt.ConservativeRiskReward:0.00}");
+if (!string.IsNullOrEmpty(pt.ConfidenceNote)) Console.WriteLine($"  Уверенность: {pt.ConfidenceNote}");
+
+// =====================  ПАМЯТЬ КОНТРАКТА  =====================
+if (rec.Memory is { } m)
+{
+    Console.WriteLine();
+    Console.WriteLine("=== ПАМЯТЬ КОНТРАКТА ===");
+    Console.WriteLine($"Срезов: {m.SnapshotCount} ({m.FirstSeen:yyyy-MM-dd}…{m.LastSeen:yyyy-MM-dd})");
+    if (m.HasHistory)
+    {
+        Console.WriteLine($"Реализованный диапазон: {F(m.RealizedLow)} ({m.RealizedLowAt:MM-dd}) … {F(m.RealizedHigh)} ({m.RealizedHighAt:MM-dd}); позиция спота {(m.RangePosition * 100):0}%");
+        Console.WriteLine($"  на LOW: NetGEX {F0(m.NetGexAtLow)} USD/1%, OI {F0(m.OiAtLow)};  на HIGH: NetGEX {F0(m.NetGexAtHigh)} USD/1%, OI {F0(m.OiAtHigh)}");
+    }
+    Console.WriteLine($"Flip: сейчас {(m.FlipNow is { } fn ? F(fn) : "—")}, 24ч назад {(m.Flip24hAgo is { } fa ? F(fa) : "—")}, " +
+                      $"миграция {(m.FlipMigrationUsd is { } fm ? fm.ToString("+0;-0", CultureInfo.InvariantCulture) : "—")}; " +
+                      $"глубина под flip {(m.FlipDepthSigmas is { } fd ? fd.ToString("+0.0;-0.0", CultureInfo.InvariantCulture) + "σ" : "—")}");
+    Console.WriteLine($"Поток OI на стенах за 24ч: CALL {(m.CallWallOiFlow is { } cwf ? cwf.ToString("+0;-0", CultureInfo.InvariantCulture) : "—")}, " +
+                      $"PUT {(m.PutWallOiFlow is { } pwf ? pwf.ToString("+0;-0", CultureInfo.InvariantCulture) : "—")}");
+    Console.WriteLine($"Net GEX за 24ч: {(m.NetGexChange is { } ngc ? ngc.ToString("+0;-0", CultureInfo.InvariantCulture) : "—")}; откат цены за 24ч {m.RecentRunupPct:+0.0;-0.0}%");
+    Console.WriteLine($"Репрезентативность OI: {(m.OiRepresentativeness * 100):0}% от макс. серии{(m.IsThin ? " — ТОНКАЯ серия" : "")}");
+    Console.WriteLine($"Стоп рекомендации в зоне отскока к flip: {(m.StopInsideBounceZone ? "ДА" : "нет")}");
+}
 
 // =====================  ПРОВЕРКИ АГРЕГАЦИИ (независимый пересчёт)  =====================
 if (aggAnalyses is not null)

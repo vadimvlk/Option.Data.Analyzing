@@ -108,6 +108,40 @@ foreach ((int curId, string curName) in new[] { (1, "BTC"), (2, "ETH") })
     for (int i = 0; i < S; i++)
         spotGlobal[i] = snaps[i].Count > 0 ? snaps[i].Values.Max(e => e.MaxU) : 0;
 
+    // Хранилища ДИНАМИЧЕСКИХ фич памяти (заполняются по мере обработки, читаются как прошлое; без look-ahead).
+    var netGexAt = new double[S]; Array.Fill(netGexAt, double.NaN);
+    var flipAt = new double[S]; Array.Fill(flipAt, double.NaN);
+    var oiByStrikeAt = new Dictionary<int, (double C, double P)>[S];
+
+    // Индекс снимка ~targetH часов назад (ближайший в пределах ±tol), иначе −1.
+    int PastIdx(int jNow, double targetH, double tol)
+    {
+        int best = -1; double bestErr = double.MaxValue;
+        for (int k = jNow - 1; k >= 0; k--)
+        {
+            double dh = (times[jNow] - times[k]).TotalHours;
+            if (dh > targetH + tol) break;
+            double err = Math.Abs(dh - targetH);
+            if (dh >= targetH - tol && err < bestErr) { bestErr = err; best = k; }
+        }
+        return best;
+    }
+
+    // Центрированное положение спота в реализованном диапазоне за lb снимков: −1 (дно) … +1 (вершина).
+    double RangePosCentered(int jNow, int lb)
+    {
+        double lo = double.MaxValue, hi = double.MinValue;
+        for (int k = Math.Max(0, jNow - lb + 1); k <= jNow; k++)
+        {
+            double s = spotGlobal[k];
+            if (s <= 0 || !double.IsFinite(s)) continue;
+            if (s < lo) lo = s;
+            if (s > hi) hi = s;
+        }
+        if (hi <= lo) return double.NaN;
+        return 2.0 * (spotGlobal[jNow] - lo) / (hi - lo) - 1.0;
+    }
+
     // Первое появление экспирации (для статистики доступности flow в single-режиме).
     var firstSeen = new Dictionary<string, int>();
     for (int i = 0; i < S; i++)
@@ -258,6 +292,58 @@ foreach ((int curId, string curName) in new[] { (1, "BTC"), (2, "ETH") })
         double mp = MaxPain(chainAgg);
         double pin = mp > 0 ? (mp - spot) / spot : double.NaN;
 
+        // ---- ДИНАМИЧЕСКИЕ фичи памяти: HIGH/LOW, изменение гаммы (Net GEX/flip), набор/сброс OI на стенах ----
+        var oiMapNow = new Dictionary<int, (double C, double P)>();
+        foreach ((double K, double C, double P) in chainAgg) oiMapNow[(int)K] = (C, P);
+
+        double rangePos160 = RangePosCentered(j, 160);   // ~20 дней
+        double rangePos40 = RangePosCentered(j, 40);     // ~5 дней
+        double flipVal = flip ?? double.NaN;
+
+        int p8 = PastIdx(j, 24, 5);    // ~24ч назад
+        int p24 = PastIdx(j, 72, 8);   // ~72ч назад
+
+        double netGexTrend8 = p8 >= 0 && double.IsFinite(netGexAt[p8]) ? netGexSpot - netGexAt[p8] : double.NaN;
+        double flipMig8 = p8 >= 0 && double.IsFinite(flipAt[p8]) && double.IsFinite(flipVal) ? flipVal - flipAt[p8] : double.NaN;
+        double flipMig24 = p24 >= 0 && double.IsFinite(flipAt[p24]) && double.IsFinite(flipVal) ? flipVal - flipAt[p24] : double.NaN;
+
+        // Набор/сброс OI на ТЕКУЩИХ стенах относительно прошлого среза (>0 — набор на CALL-стене сильнее, чем на PUT).
+        double WallNetFlow(int pIdx)
+        {
+            if (pIdx < 0 || oiByStrikeAt[pIdx] is null) return double.NaN;
+            Dictionary<int, (double C, double P)> past = oiByStrikeAt[pIdx];
+            double dCall = 0, dPut = 0;
+            if (cw is { } cwk)
+                dCall = (oiMapNow.TryGetValue((int)cwk, out (double C, double P) an) ? an.C : 0)
+                        - (past.TryGetValue((int)cwk, out (double C, double P) ap) ? ap.C : 0);
+            if (pw is { } pwk)
+                dPut = (oiMapNow.TryGetValue((int)pwk, out (double C, double P) bn) ? bn.P : 0)
+                       - (past.TryGetValue((int)pwk, out (double C, double P) bp) ? bp.P : 0);
+            return dCall - dPut;
+        }
+        double PutWallBuild(int pIdx)
+        {
+            if (pIdx < 0 || oiByStrikeAt[pIdx] is null || pw is not { } pwk) return double.NaN;
+            return (oiMapNow.TryGetValue((int)pwk, out (double C, double P) n) ? n.P : 0)
+                   - (oiByStrikeAt[pIdx].TryGetValue((int)pwk, out (double C, double P) p) ? p.P : 0);
+        }
+        double wallFlow8 = WallNetFlow(p8);
+        double wallFlow24 = WallNetFlow(p24);
+        double putWallBuild24 = PutWallBuild(p24);
+
+        // Сохранить текущие значения для будущих снимков.
+        netGexAt[j] = netGexSpot;
+        flipAt[j] = flipVal;
+        oiByStrikeAt[j] = oiMapNow;
+
+        // Голоса фич памяти (знаки — из IC: flipMig +, wallFlow − [набор CALL→вниз], netGex +, range +).
+        double vFlipMig = double.IsNaN(flipMig8) ? 0 : Clamp(Math.Tanh(flipMig8 / Math.Max(sessSigma, 1e-9)), -1, 1);
+        double vWall = double.IsNaN(wallFlow8) || sumOiW <= 0 ? 0 : Clamp(-Math.Tanh(wallFlow8 / (0.03 * sumOiW)), -1, 1);
+        double vNetGex = double.IsNaN(netGexTrend8) || peak <= 0 ? 0 : Clamp(Math.Tanh(netGexTrend8 / peak), -1, 1);
+        double vRange = double.IsNaN(rangePos160) ? 0 : Clamp(rangePos160, -1, 1);
+        double biasMem = ComposeBiasMem(structVote, flowVoteNew, staticVote, rr.HasValue, skewVote, vFlipMig, vWall, vNetGex, vRange);
+        double memOnly = ComposeMemOnly(vFlipMig, vWall, vNetGex, vRange);
+
         // --- форвардные доходности (глобальный спот-ряд) ---
         var fwd = new double[horizonsH.Length];
         for (int hI = 0; hI < horizonsH.Length; hI++)
@@ -281,7 +367,10 @@ foreach ((int curId, string curName) in new[] { (1, "BTC"), (2, "ETH") })
 
         samples.Add(new Sample(regime, structVote, staticVote,
             flowVoteResid, flowVoteRaw, flowVoteNew, skewVote, bias, biasRawFlow, biasNew,
-            mom24, pin, fwd[0], fwd[1], fwd[2], flowOk));
+            mom24, pin,
+            rangePos160, rangePos40, netGexTrend8, flipMig8, flipMig24, wallFlow8, wallFlow24, putWallBuild24,
+            biasMem, memOnly,
+            fwd[0], fwd[1], fwd[2], flowOk));
     }
 
     // ================= ОТЧЁТ =================
@@ -330,6 +419,22 @@ foreach ((int curId, string curName) in new[] { (1, "BTC"), (2, "ETH") })
     Console.WriteLine($"    flowFlip(new) активен (|vote|≥{FlowEpsilon}): {Pct(nFlowNewFires, samples.Count)}");
     PrintIc("mom24 [канд]", samples, s => s.Mom24, s => double.IsFinite(s.Mom24));
     PrintIc("pinMP [канд]", samples, s => s.Pin, s => double.IsFinite(s.Pin));
+
+    Console.WriteLine();
+    Console.WriteLine("  --- ДИНАМИЧЕСКИЕ фичи памяти (IC vs форвард-доходность; нужна согласованность знака BTC↔ETH) ---");
+    PrintIc("rangePos160", samples, s => s.RangePos160, s => double.IsFinite(s.RangePos160));
+    PrintIc("rangePos40", samples, s => s.RangePos40, s => double.IsFinite(s.RangePos40));
+    PrintIc("netGexTrend8", samples, s => s.NetGexTrend8, s => double.IsFinite(s.NetGexTrend8));
+    PrintIc("flipMig8", samples, s => s.FlipMig8, s => double.IsFinite(s.FlipMig8));
+    PrintIc("flipMig24", samples, s => s.FlipMig24, s => double.IsFinite(s.FlipMig24));
+    PrintIc("wallFlow8", samples, s => s.WallFlow8, s => double.IsFinite(s.WallFlow8));
+    PrintIc("wallFlow24", samples, s => s.WallFlow24, s => double.IsFinite(s.WallFlow24));
+    PrintIc("putWallBuild24", samples, s => s.PutWallBuild24, s => double.IsFinite(s.PutWallBuild24));
+
+    Console.WriteLine();
+    Console.WriteLine("  --- КОМПОЗИТЫ с памятью (сравни с BIAS(new) выше) ---");
+    PrintIc("BIAS+память", samples, s => s.BiasMem, s => s.BiasMem != 0);
+    PrintIc("ТОЛЬКО память", samples, s => s.MemOnly, s => s.MemOnly != 0);
 
     void PrintIc(string name, List<Sample> all, Func<Sample, double> sig, Func<Sample, bool> use)
     {
@@ -649,6 +754,38 @@ static double ComposeBias(double structVote, double flowVote, double staticVote,
     return Clamp(comps.Sum(x => x.V * x.W) / wsum, -1, 1);
 }
 
+// Композит с фичами ПАМЯТИ (пробные веса; знаки валидированы IC). Существующие веса ужаты,
+// чтобы освободить место под flipMig/wallFlow (сильнейшие новые) и слабые netGex/range.
+static double ComposeBiasMem(double structVote, double flowVote, double staticVote, bool hasSkew, double skewVote,
+    double flipMig, double wallFlow, double netGex, double range)
+{
+    var comps = new List<(double V, double W)>();
+    if (structVote != 0) comps.Add((structVote, 0.28));
+    if (Math.Abs(flowVote) >= FlowEpsilon) comps.Add((flowVote, 0.18));
+    else if (staticVote != 0) comps.Add((staticVote, 0.18));
+    if (hasSkew) comps.Add((skewVote, 0.12));
+    if (flipMig != 0) comps.Add((flipMig, 0.22));
+    if (wallFlow != 0) comps.Add((wallFlow, 0.12));
+    if (netGex != 0) comps.Add((netGex, 0.04));
+    if (range != 0) comps.Add((range, 0.04));
+    double wsum = comps.Sum(x => x.W);
+    if (wsum <= 0) return 0;
+    return Clamp(comps.Sum(x => x.V * x.W) / wsum, -1, 1);
+}
+
+// Композит ТОЛЬКО из памяти — самостоятельная предсказательная сила набора.
+static double ComposeMemOnly(double flipMig, double wallFlow, double netGex, double range)
+{
+    var comps = new List<(double V, double W)>();
+    if (flipMig != 0) comps.Add((flipMig, 0.45));
+    if (wallFlow != 0) comps.Add((wallFlow, 0.27));
+    if (netGex != 0) comps.Add((netGex, 0.13));
+    if (range != 0) comps.Add((range, 0.15));
+    double wsum = comps.Sum(x => x.W);
+    if (wsum <= 0) return 0;
+    return Clamp(comps.Sum(x => x.V * x.W) / wsum, -1, 1);
+}
+
 static (double Ic, int N) Pearson(List<(double S, double F)> pts)
 {
     int n = pts.Count;
@@ -705,4 +842,8 @@ internal readonly record struct Sample(
     int Regime, double Struct, double Static,
     double FlowResid, double FlowRaw, double FlowNew, double Skew,
     double Bias, double BiasRawFlow, double BiasNew,
-    double Mom24, double Pin, double F6, double F12, double F24, bool FlowOk);
+    double Mom24, double Pin,
+    double RangePos160, double RangePos40, double NetGexTrend8, double FlipMig8, double FlipMig24,
+    double WallFlow8, double WallFlow24, double PutWallBuild24,
+    double BiasMem, double MemOnly,
+    double F6, double F12, double F24, bool FlowOk);
