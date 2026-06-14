@@ -180,6 +180,30 @@ public static class SessionAnalysisMath
     }
 
     /// <summary>
+    /// Страйк с максимальным ПОЛОЖИТЕЛЬНЫМ net-GEX (CallGex−PutGex) в пределах [lower, upper] —
+    /// +γ пиннинг-магнит (куда тянет цену в +гамме). Отличается от <see cref="PeakGexStrike"/>
+    /// (максимум МАССЫ), который может оказаться пут-тяжёлым страйком ниже flip. null — нет
+    /// страйка с положительным net в диапазоне.
+    /// </summary>
+    public static double? PosGammaPeakStrike(IReadOnlyList<StrikeGexBreakdown> breakdown, double lower, double upper)
+    {
+        double? best = null;
+        double bestNet = 0;
+        foreach (StrikeGexBreakdown b in breakdown)
+        {
+            if (b.Strike < lower || b.Strike > upper)
+                continue;
+            double net = b.CallGex - b.PutGex;
+            if (net > bestNet)
+            {
+                bestNet = net;
+                best = b.Strike;
+            }
+        }
+        return best;
+    }
+
+    /// <summary>
     /// Профиль Net GEX в диапазоне [spot·lowFactor … spot·highFactor], <paramref name="steps"/> точек.
     /// </summary>
     public static List<GammaProfilePoint> GammaProfile(IReadOnlyList<GammaStrike> strikes, double spot, double lowFactor = 0.85, double highFactor = 1.15, int steps = 120)

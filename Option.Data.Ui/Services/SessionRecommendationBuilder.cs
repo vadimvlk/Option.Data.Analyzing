@@ -303,6 +303,7 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
         double? putWallStrike = SessionAnalysisMath.GexPutWall(strikeGex, spot)
                                 ?? SessionAnalysisMath.PutWall(chain, spot)?.Strike;
         double? pinStrike = SessionAnalysisMath.PeakGexStrike(strikeGex, lower2, upper2);
+        double? posGammaPeak = SessionAnalysisMath.PosGammaPeakStrike(strikeGex, lower2, upper2);
 
         double maxPain = OptionExposureMath.MaxPain(chain);
         double totalOi = chain.Sum(o => o.CallOi + o.PutOi);
@@ -328,7 +329,7 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
         rec.Primary = rec.Regime switch
         {
             VolatilityRegime.PositiveGamma => BuildFadePlan(rec, spot, sessionSigma,
-                callWallStrike, putWallStrike, pinStrike, maxPain, gammaFlip, horizonDte),
+                callWallStrike, putWallStrike, pinStrike, posGammaPeak, maxPain, gammaFlip, horizonDte),
             VolatilityRegime.NegativeGamma => BuildBreakoutPlan(rec, spot, sessionSigma,
                 callWallStrike, putWallStrike, pinStrike, gammaFlip),
             _ => BuildNeutralPlan(rec, spot, sessionSigma,
@@ -632,7 +633,7 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
     private PrimaryTrade BuildFadePlan(
         SessionRecommendation rec, double spot, double sessionSigma,
         double? callWallStrike, double? putWallStrike, double? pinStrike,
-        double maxPain, double? gammaFlip, double horizonDte)
+        double? posGammaPeak, double maxPain, double? gammaFlip, double horizonDte)
     {
         double s = sessionSigma;
         double resistance = callWallStrike ?? rec.Range.Upper1;
@@ -682,6 +683,12 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
 
         if (plan is not null)
             return plan;
+
+        // Фолбэк: фейд К ГАММА-ПИНУ (+γ пиннинг-магнит = пик ПОЛОЖИТЕЛЬНОГО net-GEX),
+        // когда фейд от стен не сложился. ЛОНГ если спот ниже пина, ШОРТ если выше — по фильтру R:R.
+        PrimaryTrade? pinPlan = TryPinFade(rec, spot, s, posGammaPeak, gammaFlip, callWallStrike);
+        if (pinPlan is not null)
+            return pinPlan;
 
         // Конкретная причина, почему фейд от стены не строится (вместо общей заглушки «3σ ИЛИ flip ИЛИ R:R»):
         // приоритет — отсечение gamma-flip, затем дальность стены, иначе тесный диапазон (цель ближе порога R:R).
@@ -795,6 +802,80 @@ public class SessionRecommendationBuilder : ISessionRecommendationBuilder
         }
 
         return trade;
+    }
+
+    /// <summary>
+    /// +Гамма, фолбэк когда фейд от стен не сложился: фейд К ГАММА-ПИНУ (пиннинг-магнит).
+    /// Магнит должен быть в +γ-зоне (выше flip). ЛОНГ если спот ниже пина, ШОРТ если выше.
+    /// Вход «от рынка», стоп: для лонга — под flip (потеря +γ), для шорта — за сопротивление сверху.
+    /// Цель — пин; фильтр R:R ≥ <see cref="FadeMinRR"/>. null — нет пина/далеко/R:R не проходит.
+    /// </summary>
+    private PrimaryTrade? TryPinFade(
+        SessionRecommendation rec, double spot, double s, double? pinStrike,
+        double? gammaFlip, double? callWallStrike)
+    {
+        if (pinStrike is not { } pin || !double.IsFinite(pin) || pin <= 0)
+            return null;
+
+        // Магнит-пин должен лежать в +γ-зоне (выше flip): иначе это не пиннинг-магнит +гаммы.
+        if (gammaFlip is { } gf && double.IsFinite(gf) && pin <= gf)
+            return null;
+
+        // Сессионная достижимость: пин дальше FadeMaxWallDistSigmas σ — не план сессии.
+        if (Math.Abs(pin - spot) > FadeMaxWallDistSigmas * s)
+            return null;
+
+        int dir = pin > spot ? +1 : pin < spot ? -1 : 0;
+        if (dir == 0)
+            return null;
+
+        double entryLow = spot - MarketEntryHalfSigmas * s;
+        double entryHigh = spot + MarketEntryHalfSigmas * s;
+        double entryMid = spot;
+
+        double stop;
+        string invalidation;
+        if (dir > 0)
+        {
+            // ЛОНГ к пину: инвалидация — уход под gamma-flip (потеря +γ → пиннинг вверх мёртв).
+            stop = gammaFlip is { } gfl && double.IsFinite(gfl) && gfl < spot
+                ? gfl - FlipStopBufferSigmas * s
+                : spot - FadeStopSigmas * s;
+            invalidation = gammaFlip is { } gfi && double.IsFinite(gfi) && gfi < spot
+                ? $"закрытие ниже gamma-flip {Fmt(gfi)} — потеря +гаммы, пиннинг вверх отменяется"
+                : $"закрытие ниже {Fmt(stop)}";
+        }
+        else
+        {
+            // ШОРТ к пину: инвалидация — пробой вверх за сопротивление (+γ не удержал).
+            double upRef = callWallStrike is { } cw && double.IsFinite(cw) && cw > spot ? cw : spot;
+            stop = upRef + FadeStopSigmas * s;
+            invalidation = $"закрытие выше {Fmt(stop)} — пробой вверх, пиннинг к пину отменяется";
+        }
+
+        double risk = Math.Abs(entryMid - stop);
+        if (risk <= 0 || !double.IsFinite(risk))
+            return null;
+
+        double dist = Math.Abs(pin - entryMid);
+        if (dist < Math.Max(FadeMinTargetSigmas * s, FadeMinRR * risk))
+            return null;
+
+        return new PrimaryTrade
+        {
+            Action = TradeAction.FadeRange,
+            Side = dir > 0 ? TradeSide.Long : TradeSide.Short,
+            EntryLow = entryLow,
+            EntryHigh = entryHigh,
+            Target = pin,
+            Stop = stop,
+            RiskReward = Math.Round(dist / risk, 2),
+            Drivers = TopDrivers(rec.BiasComponents, 2),
+            Headline = $"ФЕЙД К ПИНУ (+гамма) — {(dir > 0 ? "Long" : "Short")} от {Fmt(spot)} → пик гаммы {Fmt(pin)}",
+            Reason = $"+гамма: спот {(dir > 0 ? "ниже" : "выше")} пика гаммы {Fmt(pin)} — дилеры гасят волу и тянут цену к пину ({(dir > 0 ? "вверх" : "вниз")}).",
+            Invalidation = invalidation,
+            PlanB = "Пробой gamma-flip со сменой знака Net GEX → переход к импульсной сделке."
+        };
     }
 
     /// <summary>
