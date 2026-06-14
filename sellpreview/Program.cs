@@ -180,5 +180,5 @@ foreach (SellCard card in new[] { rec.Adaptive, rec.Aggressive })
 
 Console.WriteLine("\nТоп кандидатов (EV/маржа):");
 foreach (SellCandidate cnd in rec.TopCandidates)
-    Console.WriteLine($"  {cnd.Instrument,-26} δ {cnd.Delta:+0.00;-0.00} бид {cnd.BidUsd,8:N0}$ EV {cnd.EvUsd,8:N0}$ " +
+    Console.WriteLine($"  {cnd.Instrument,-26} δ {cnd.Delta:+0.00;-0.00} mark {cnd.PremiumUsd,8:N0}$ EV {cnd.EvUsd,8:N0}$ " +
                       $"EV/маржа {cnd.EvOnMargin * 100,6:0.00}% P(OTM) {(1 - cnd.ProbItm) * 100,5:0.0}% {(cnd.BehindWall ? "за стеной" : "ВНУТРИ стены")}");

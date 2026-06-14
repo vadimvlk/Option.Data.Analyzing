@@ -24,9 +24,14 @@ public class SellCandidate
     public double Strike { get; init; }
     /// <summary>Точное имя инструмента Deribit, напр. BTC-27JUN25-130000-C.</summary>
     public string Instrument { get; init; } = "";
-    public double BidUsd { get; init; }
-    public double BidCoin { get; init; }
-    public double MarkUsd { get; init; }
+    /// <summary>
+    /// Премия продавца для анализа — берётся МАРК-цена (mark_price), а НЕ bid.
+    /// Mark стабильна и математически согласована с моделью (≈ Black-76 по рыночной IV),
+    /// тогда как bid/ask «человеческие» и шумные. USD.
+    /// </summary>
+    public double PremiumUsd { get; init; }
+    /// <summary>Премия продавца (марк) в базовой монете.</summary>
+    public double PremiumCoin { get; init; }
     public double MarketIvPct { get; init; }
     public double Delta { get; init; }
     /// <summary>P(экспирация в деньгах), риск-нейтрально по рыночной IV ноги.</summary>
@@ -35,7 +40,7 @@ public class SellCandidate
     public double ProbTouch { get; init; }
     /// <summary>Black-76 стоимость по ПРОГНОЗНОЙ σ_phys (модельная «справедливая» цена), USD.</summary>
     public double TheoPhysUsd { get; init; }
-    /// <summary>Эдж продавца: BidUsd − TheoPhysUsd. Главный критерий ранжирования (на маржу).</summary>
+    /// <summary>Эдж продавца: PremiumUsd (mark) − TheoPhysUsd. Главный критерий ранжирования (на маржу).</summary>
     public double EvUsd { get; init; }
     public double MarginCoin { get; init; }
     public double MarginUsd { get; init; }

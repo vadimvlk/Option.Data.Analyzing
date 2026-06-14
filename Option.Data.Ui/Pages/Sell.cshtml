@@ -123,7 +123,7 @@
                     }
                     <div class="grid">
                         <div>
-                            <p class="mb-1"><strong>Премия (бид):</strong> @Coin(card.TotalPremiumCoin) @rec.Currency = <strong>@N0(card.TotalPremiumUsd) $</strong></p>
+                            <p class="mb-1"><strong>Премия (mark):</strong> @Coin(card.TotalPremiumCoin) @rec.Currency = <strong>@N0(card.TotalPremiumUsd) $</strong></p>
                             <p class="mb-1"><strong>Маржа Deribit:</strong> @Coin(card.TotalMarginCoin) @rec.Currency = @N0(card.TotalMarginUsd) $</p>
                             <p class="mb-1"><strong>Доходность на маржу:</strong> @Pct(card.YieldOnMarginPct)% за @rec.DteDays.ToString("0.0") дн (= @Pct(card.YieldAnnualizedPct)% годовых)</p>
                             <p class="mb-1"><strong>Тета/день:</strong> ≈ @N0(-(p.ThetaPerDayUsd + (card.SecondLeg?.ThetaPerDayUsd ?? 0))) $ в пользу продавца</p>
@@ -181,7 +181,7 @@
                 <div class="overflow-auto">
                     <table class="table table-sm table-bordered table-hover mb-0">
                         <thead>
-                        <tr><th>Инструмент</th><th class="text-end">δ</th><th class="text-end">Бид $</th>
+                        <tr><th>Инструмент</th><th class="text-end">δ</th><th class="text-end">Mark $</th>
                             <th class="text-end">EV $</th><th class="text-end">EV/маржа</th>
                             <th class="text-end">P(OTM)</th><th>За стеной</th></tr>
                         </thead>
@@ -191,7 +191,7 @@
                             <tr>
                                 <td><small>@c.Instrument</small></td>
                                 <td class="text-end">@c.Delta.ToString("+0.00;-0.00")</td>
-                                <td class="text-end">@N0(c.BidUsd)</td>
+                                <td class="text-end">@N0(c.PremiumUsd)</td>
                                 <td class="text-end @(c.EvUsd > 0 ? "text-success" : "text-danger")">@N0(c.EvUsd)</td>
                                 <td class="text-end">@((c.EvOnMargin * 100).ToString("0.00"))%</td>
                                 <td class="text-end">@Pct((1 - c.ProbItm) * 100)%</td>

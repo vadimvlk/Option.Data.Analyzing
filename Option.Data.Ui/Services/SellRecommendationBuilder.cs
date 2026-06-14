@@ -44,8 +44,8 @@ public class SellRecommendationBuilder : ISellRecommendationBuilder
     private const double EwmaHalfLifeDays = 7.0;
 
     // ---------- Фильтры кандидатов. КАЛИБРУЕМО. ----------
-    /// <summary>Минимальная премия (бид) как доля форварда: отсев грошовых хвостов.</summary>
-    private const double MinBidUsdFractionOfForward = 0.0003;
+    /// <summary>Минимальная премия (марк) как доля форварда: отсев грошовых хвостов.</summary>
+    private const double MinPremiumUsdFractionOfForward = 0.0003;
     /// <summary>Минимальный DTE, дней: короче — пин-риск, карточки не публикуются.</summary>
     private const double MinDteDays = 0.5;
 
@@ -324,7 +324,7 @@ public class SellRecommendationBuilder : ISellRecommendationBuilder
         SellRecommendation rec, List<OptionData> chain, double f, double t, double sigmaPhys)
     {
         var result = new List<SellCandidate>();
-        double minBidUsd = f * MinBidUsdFractionOfForward;
+        double minPremiumUsd = f * MinPremiumUsdFractionOfForward;
 
         foreach (OptionData o in chain)
         {
@@ -339,46 +339,46 @@ public class SellRecommendationBuilder : ISellRecommendationBuilder
         void TryAdd(bool isCall, OptionData o)
         {
             double oi = isCall ? o.CallOi : o.PutOi;
-            double bidUsd = isCall ? o.CallBid : o.PutBid;
-            double markUsd = isCall ? o.CallPrice : o.PutPrice;
+            // Премия для анализа — МАРК-цена (mark в USD), а не bid: математически согласована
+            // с моделью (≈ Black-76 по рыночной IV) и не шумит, как «человеческие» bid/ask.
+            double premiumUsd = isCall ? o.CallPrice : o.PutPrice;
             double ivPct = isCall ? o.Iv : (o.PutIv > 0 ? o.PutIv : o.Iv);
             double sigma = ivPct / 100.0;
-            if (oi <= 0 || bidUsd <= 0 || sigma <= 0 || markUsd <= 0)
+            if (oi <= 0 || premiumUsd <= 0 || sigma <= 0)
                 return;
 
-            double markCoin = markUsd / f;
+            double markCoin = premiumUsd / f;
             double marginCoin = SellMath.ShortMarginCoin(isCall, f, o.Strike, markCoin);
             double marginUsd = marginCoin * f;
             if (marginUsd <= 0)
                 return;
 
-            double ev = bidUsd - SellMath.Black76Price(isCall, f, o.Strike, sigmaPhys, t);
+            double ev = premiumUsd - SellMath.Black76Price(isCall, f, o.Strike, sigmaPhys, t);
 
             result.Add(new SellCandidate
             {
                 IsCall = isCall,
                 Strike = o.Strike,
                 Instrument = $"{rec.Currency}-{rec.Expiration}-{(int)Math.Round(o.Strike)}-{(isCall ? "C" : "P")}",
-                BidUsd = bidUsd,
-                BidCoin = bidUsd / f,
-                MarkUsd = markUsd,
+                PremiumUsd = premiumUsd,
+                PremiumCoin = premiumUsd / f,
                 MarketIvPct = ivPct,
                 Delta = isCall ? o.CallDelta : o.PutDelta,
                 ProbItm = SellMath.ProbItm(isCall, f, o.Strike, sigma, t),
                 ProbTouch = SellMath.ProbTouch(isCall, f, o.Strike, sigma, t),
-                TheoPhysUsd = bidUsd - ev,
+                TheoPhysUsd = premiumUsd - ev,
                 EvUsd = ev,
                 MarginCoin = marginCoin,
                 MarginUsd = marginUsd,
                 EvOnMargin = ev / marginUsd,
-                YieldOnMargin = bidUsd / marginUsd,
-                YieldAnnualizedPct = rec.DteDays > 0 ? bidUsd / marginUsd * 365.0 / rec.DteDays * 100.0 : 0,
+                YieldOnMargin = premiumUsd / marginUsd,
+                YieldAnnualizedPct = rec.DteDays > 0 ? premiumUsd / marginUsd * 365.0 / rec.DteDays * 100.0 : 0,
                 ThetaPerDayUsd = SellMath.ThetaPerDayUsd(f, o.Strike, sigma, t),
                 VegaPerVolPointUsd = SellMath.VegaPerVolPointUsd(f, o.Strike, sigma, t),
                 BehindWall = isCall
                     ? rec.CallWall is { } cw && o.Strike >= cw
                     : rec.PutWall is { } pw && o.Strike <= pw,
-                TooSmallPremium = bidUsd < minBidUsd
+                TooSmallPremium = premiumUsd < minPremiumUsd
             });
         }
     }
@@ -533,11 +533,11 @@ public class SellRecommendationBuilder : ISellRecommendationBuilder
         SellCandidate p = card.Primary!;
         SellCandidate? s = card.SecondLeg;
 
-        card.TotalPremiumUsd = p.BidUsd + (s?.BidUsd ?? 0);
-        card.TotalPremiumCoin = p.BidCoin + (s?.BidCoin ?? 0);
+        card.TotalPremiumUsd = p.PremiumUsd + (s?.PremiumUsd ?? 0);
+        card.TotalPremiumCoin = p.PremiumCoin + (s?.PremiumCoin ?? 0);
         card.TotalMarginCoin = s is null
             ? p.MarginCoin
-            : SellMath.StrangleMarginCoin(p.MarginCoin, s.MarginCoin, p.MarkUsd / f, s.MarkUsd / f);
+            : SellMath.StrangleMarginCoin(p.MarginCoin, s.MarginCoin, p.PremiumUsd / f, s.PremiumUsd / f);
         card.TotalMarginUsd = card.TotalMarginCoin * f;
         card.YieldOnMarginPct = card.TotalMarginUsd > 0 ? card.TotalPremiumUsd / card.TotalMarginUsd * 100 : 0;
         card.YieldAnnualizedPct = rec.DteDays > 0 ? card.YieldOnMarginPct * 365.0 / rec.DteDays : 0;
